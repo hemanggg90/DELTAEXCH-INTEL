@@ -115,6 +115,8 @@ class RiskLimits:
     close_before_settlement_min: int = 30  # exit by 17:00 IST for the 17:30 IST settlement
     max_leg_spread_pct: float = 10.0  # bid/ask spread as % of mid, per leg
     max_iv_to_rv_for_debit: float = 1.5  # veto debit structures when implied vol > 1.5x realised vol
+    # Minimum open interest per leg (contracts). None = check OFF until the user chooses a value.
+    min_leg_open_interest: float | None = None
     allow_naked_short: bool = False  # never configurable via env: defined-risk only
 
     @classmethod
@@ -133,6 +135,7 @@ class RiskLimits:
             close_before_settlement_min=e.int("CLOSE_BEFORE_SETTLEMENT_MIN", d.close_before_settlement_min),
             max_leg_spread_pct=e.float("MAX_LEG_SPREAD_PCT", d.max_leg_spread_pct),
             max_iv_to_rv_for_debit=e.float("MAX_IV_TO_RV_FOR_DEBIT", d.max_iv_to_rv_for_debit),
+            min_leg_open_interest=e.opt_float("MIN_LEG_OPEN_INTEREST"),
         )
 
 

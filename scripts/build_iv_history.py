@@ -116,7 +116,7 @@ def summarise(u, candles, obs, hourly, smile, settle, index, since, until) -> di
             gaps = h["hour"].diff().dt.total_seconds().div(3600).fillna(1)
             days = h["hour"].dt.floor("1D")
             per_day = days.value_counts()
-            n_days = max(1, int((pd.Timestamp(until) - pd.Timestamp(since)) / pd.Timedelta(days=1)))
+            n_days = max(1, int(np.ceil((pd.Timestamp(until) - pd.Timestamp(since)) / pd.Timedelta(days=1))))
             r["buckets"][name] = {
                 "hours_with_atm_iv_pct": round(len(h) / max(1, n_hours) * 100, 1),
                 "days_with_6plus_hours_pct": round(int((per_day >= 6).sum()) / n_days * 100, 1),
