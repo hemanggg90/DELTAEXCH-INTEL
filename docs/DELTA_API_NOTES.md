@@ -326,12 +326,49 @@ VERIFIED (docs).
 | Funding payments | — | Treated as P&L, not a fee. Whether GST applies to funding is UNVERIFIED; assume no. |
 | Indian taxes (TDS/VDA) on derivatives | Out of scope | Not modelled; noted in Known Limitations. |
 
-## 12. Options (optional later phase)
+## 12. Options
 
-- VERIFIED (live): `settlement_time` is **12:00 UTC (17:30 IST)**, for example `C-BTC-85800-041026` →
-  `2026-10-04T12:00:00Z`.
-- Symbol format: `C|P-<ASSET>-<STRIKE>-<DDMMYY>`. Daily expiries exist.
-- `GET /v2/tickers` exposes `greeks` and IV (`quotes.mark_iv`).
+VERIFIED (live), 2026-10-02.
+
+**Products**
+- Underlyings: **BTC, ETH and XAUT**.
+- Live product count: 485 calls and 465 puts.
+- Expiries: **daily** (the next 3 days), **weekly** (Fridays), **monthly** (last Friday) and quarterly. For example, BTC
+  had expiries on 02, 03, 04, 09, 16 and 30 Oct, 27 Nov and 25 Dec.
+- Settlement: `settlement_time` is **12:00 UTC (17:30 IST)**.
+- Symbol format: `C|P-<ASSET>-<STRIKE>-<DDMMYY>`, e.g. `C-BTC-87000-021026`.
+- BTC options: `contract_value` 0.001 BTC, `tick_size` 0.1 (USD premium per 1 BTC).
+
+**Fees**
+- `maker/taker_commission_rate` = 0.0001 (0.01%, applied to notional, which is UNVERIFIED).
+- `product_specs.premium_commission_rate` = 0.035, i.e. the fee is capped at 3.5% of premium. This confirms the press
+  article on the cap; the press figure of 0.03% does not match the product field.
+
+**Tickers** (`/v2/tickers?contract_types=call_options&underlying_asset_symbols=BTC`)
+- Prices and size: `mark_price`, `oi`, `turnover_usd`.
+- `quotes`: `best_bid`, `best_ask`, sizes, `bid_iv`, `ask_iv`, `mark_iv`.
+- `greeks`: `delta`, `gamma`, `theta`, `vega`, `rho`, `spot`.
+- Liquidity is concentrated in near-dated, near-ATM strikes. On 2026-10-02 the top call by turnover was a 1-day
+  expiry, with a bid/ask of 10.6/12.
+
+**Candles for live options:** `/v2/history/candles` works for option symbols, and so does `MARK:<option symbol>`.
+
+**Expired options history**
+- Expired products are listed by `/v2/products?states=expired`, back to at least Dec 2025. The listing has more than
+  20,000 expired calls, all paginated.
+- `/v2/history/candles` returns candles for expired options. Spot-checks found BTC monthly calls from Jan, Mar, May,
+  Jul and Aug 2026.
+- **The history is SPARSE.** Bars exist only when there was a trade. In the 7 days before expiry, sampled contracts
+  had 102–283 five-minute bars out of 2016.
+- `MARK:` series for expired options are equally sparse (145–284 of 2016 bars).
+- **Candles continue after settlement:** flat bars repeating the last price with volume 0 (seen for 4 days after a
+  26-Sep expiry). Any backtest must cut a contract's bars at its `settlement_time`.
+
+**UNVERIFIED**
+- The settlement price source (index TWAP?).
+- Option margin for sellers.
+- Whether options can carry exchange-side bracket orders.
+- Whether historical IV is available anywhere other than being inferred from traded prices.
 
 ## 13. Implementation consequences
 

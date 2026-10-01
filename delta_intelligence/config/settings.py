@@ -96,22 +96,26 @@ class _Env:
 
 @dataclass(frozen=True)
 class RiskLimits:
-    """Defaults approved by the user on 2026-10-01 (conservative). Change only with the user's agreement."""
+    """Options-only risk limits.
+
+    Approved by the user on 2026-10-01 (account limits) and 2026-10-02 (option limits). Change only with the user's
+    agreement. Every structure is defined-risk, so "risk per trade" is the structure's max loss plus fees.
+    """
 
     max_risk_per_trade_pct: float = 0.5
     max_daily_loss_pct: float = 2.0
     max_drawdown_pct: float = 8.0
     max_trades_per_day: int = 6
     max_strategy_exposure_pct: float = 10.0
-    max_portfolio_exposure_pct: float = 20.0
-    max_leverage: float = 5.0
+    max_portfolio_exposure_pct: float = 20.0  # sum of open structures' max losses
     max_concurrent_positions: int = 3
-    # Liquidation price must sit at least this many stop-distances beyond the stop.
-    min_liq_distance_stop_multiple: float = 3.0
-    max_margin_utilisation_pct: float = 30.0
-    # Projected funding over the expected hold, as % of equity.
-    max_funding_cost_pct: float = 0.1
-    min_relative_volume: float = 0.3
+    min_relative_volume: float = 0.3  # of the underlying
+    # Options (2026-10-02)
+    min_hours_to_expiry: float = 6.0  # otherwise roll to the next daily expiry
+    close_before_settlement_min: int = 30  # exit by 17:00 IST for the 17:30 IST settlement
+    max_leg_spread_pct: float = 10.0  # bid/ask spread as % of mid, per leg
+    max_iv_to_rv_for_debit: float = 1.5  # veto debit structures when implied vol > 1.5x realised vol
+    allow_naked_short: bool = False  # never configurable via env: defined-risk only
 
     @classmethod
     def from_env(cls, e: _Env) -> "RiskLimits":
@@ -123,21 +127,23 @@ class RiskLimits:
             max_trades_per_day=e.int("MAX_TRADES_PER_DAY", d.max_trades_per_day),
             max_strategy_exposure_pct=e.float("MAX_STRATEGY_EXPOSURE_PCT", d.max_strategy_exposure_pct),
             max_portfolio_exposure_pct=e.float("MAX_PORTFOLIO_EXPOSURE_PCT", d.max_portfolio_exposure_pct),
-            max_leverage=e.float("MAX_LEVERAGE", d.max_leverage),
             max_concurrent_positions=e.int("MAX_CONCURRENT_POSITIONS", d.max_concurrent_positions),
-            min_liq_distance_stop_multiple=e.float("MIN_LIQ_DISTANCE_STOP_MULTIPLE", d.min_liq_distance_stop_multiple),
-            max_margin_utilisation_pct=e.float("MAX_MARGIN_UTILISATION_PCT", d.max_margin_utilisation_pct),
-            max_funding_cost_pct=e.float("MAX_FUNDING_COST_PCT", d.max_funding_cost_pct),
             min_relative_volume=e.float("MIN_RELATIVE_VOLUME", d.min_relative_volume),
+            min_hours_to_expiry=e.float("MIN_HOURS_TO_EXPIRY", d.min_hours_to_expiry),
+            close_before_settlement_min=e.int("CLOSE_BEFORE_SETTLEMENT_MIN", d.close_before_settlement_min),
+            max_leg_spread_pct=e.float("MAX_LEG_SPREAD_PCT", d.max_leg_spread_pct),
+            max_iv_to_rv_for_debit=e.float("MAX_IV_TO_RV_FOR_DEBIT", d.max_iv_to_rv_for_debit),
         )
 
 
 @dataclass(frozen=True)
 class CostModel:
-    """Trading costs. Maker/taker rates are read per product from /v2/products. These are only fallbacks."""
+    """Trading costs. Commission rates and the premium cap are read per product from /v2/products. These are only
+    fallbacks (option values verified 2026-10-02: 0.01% commission, capped at 3.5% of premium)."""
 
-    fallback_maker_rate: float = 0.0002
-    fallback_taker_rate: float = 0.0005
+    fallback_maker_rate: float = 0.0001
+    fallback_taker_rate: float = 0.0001
+    fallback_premium_cap_rate: float = 0.035
     # UNVERIFIED: 18% GST on fees is stated only by press articles. See docs/DELTA_API_NOTES.md section 11.
     gst_rate: float = 0.18
     slippage_ticks: int = 1
@@ -148,6 +154,7 @@ class CostModel:
         return cls(
             fallback_maker_rate=e.float("FALLBACK_MAKER_RATE", d.fallback_maker_rate),
             fallback_taker_rate=e.float("FALLBACK_TAKER_RATE", d.fallback_taker_rate),
+            fallback_premium_cap_rate=e.float("FALLBACK_PREMIUM_CAP_RATE", d.fallback_premium_cap_rate),
             gst_rate=e.float("GST_RATE", d.gst_rate),
             slippage_ticks=e.int("SLIPPAGE_TICKS", d.slippage_ticks),
         )

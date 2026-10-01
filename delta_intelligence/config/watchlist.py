@@ -1,8 +1,9 @@
 """
 Instruments the system scans.
 
-The default is BTC, ETH, SOL and XRP perpetuals. All four were verified live on India production and testnet on
-2026-10-01; see docs/DELTA_API_NOTES.md section 4. Override with `WATCHLIST=BTCUSD,ETHUSD,...`.
+The system trades OPTIONS ONLY (user decision, 2026-10-02). The watchlist lists the **underlyings**: their perpetual
+symbols supply signal candles, and their options are what get traded. Only BTC and ETH have options on Delta India
+(XAUT does too, but is not selected), so they are the default. Override with `WATCHLIST=BTCUSD,ETHUSD`.
 
 Contract specs (contract_value, tick_size, fees, margins) are NOT hard-coded here. They are read from /v2/products at
 runtime, and product ids are resolved per environment.
@@ -11,7 +12,7 @@ from __future__ import annotations
 
 import os
 
-DEFAULT_WATCHLIST: tuple[str, ...] = ("BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD")
+DEFAULT_WATCHLIST: tuple[str, ...] = ("BTCUSD", "ETHUSD")
 
 
 def get_watchlist(env_value: str | None = None) -> tuple[str, ...]:

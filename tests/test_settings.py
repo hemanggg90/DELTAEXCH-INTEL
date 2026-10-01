@@ -15,13 +15,19 @@ def test_defaults_are_safe() -> None:
 
 def test_user_approved_risk_defaults() -> None:
     r = Settings.from_env({}).risk
-    assert (r.max_leverage, r.max_risk_per_trade_pct, r.max_daily_loss_pct, r.max_drawdown_pct) == (5.0, 0.5, 2.0, 8.0)
-    assert (r.max_concurrent_positions, r.min_liq_distance_stop_multiple, r.max_margin_utilisation_pct) == (3, 3.0, 30.0)
+    assert (r.max_risk_per_trade_pct, r.max_daily_loss_pct, r.max_drawdown_pct, r.max_concurrent_positions) == (
+        0.5, 2.0, 8.0, 3)
+    assert (r.min_hours_to_expiry, r.close_before_settlement_min, r.max_leg_spread_pct, r.max_iv_to_rv_for_debit) == (
+        6.0, 30, 10.0, 1.5)
+
+
+def test_naked_shorts_cannot_be_enabled_by_env() -> None:
+    assert Settings.from_env({"ALLOW_NAKED_SHORT": "true"}).risk.allow_naked_short is False
 
 
 def test_unknown_values_fall_back_to_safe() -> None:
-    s = Settings.from_env({"DELTA_ENV": "mainnet", "TRADING_MODE": "yolo", "MAX_LEVERAGE": "abc"})
-    assert s.delta_env == "TESTNET" and s.trading_mode == "PAPER" and s.risk.max_leverage == 5.0
+    s = Settings.from_env({"DELTA_ENV": "mainnet", "TRADING_MODE": "yolo", "MAX_LEG_SPREAD_PCT": "abc"})
+    assert s.delta_env == "TESTNET" and s.trading_mode == "PAPER" and s.risk.max_leg_spread_pct == 10.0
 
 
 def test_live_needs_both_switches() -> None:
@@ -56,5 +62,5 @@ def test_base_url_override_and_lookback_clamp() -> None:
 
 
 def test_watchlist_default_and_override() -> None:
-    assert get_watchlist("") == DEFAULT_WATCHLIST == ("BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD")
+    assert get_watchlist("") == DEFAULT_WATCHLIST == ("BTCUSD", "ETHUSD")
     assert get_watchlist(" btcusd, ETHUSD ,btcusd") == ("BTCUSD", "ETHUSD")

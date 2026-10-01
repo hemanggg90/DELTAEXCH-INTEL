@@ -1,9 +1,9 @@
 # CLAUDE.md - delta-intelligence
 
-delta-intelligence is research-first strategy intelligence and execution for **Delta Exchange India perpetual
-futures**. It is one Streamlit app, ported from `nifty-intelligence`. Read `docs/REFERENCE_README.md` for the
+delta-intelligence is research-first strategy intelligence and execution for **Delta Exchange India BTC/ETH OPTIONS**
+(options-only since 2026-10-02; perp and index candles are signal inputs only). It is one Streamlit app, ported from `nifty-intelligence`. Read `docs/REFERENCE_README.md` for the
 reference design and `docs/DELTA_API_NOTES.md` for verified exchange facts.
-The approved phased plan lives at `~/.claude/plans/replicated-tickling-pixel.md`.
+The approved phased plan (v2, options-only) lives at `~/.claude/plans/replicated-tickling-pixel.md`.
 
 The system answers one question: *which validated strategy has the strongest statistically validated, net-of-cost
 edge right now, and is there a valid setup? If not, do nothing.* **NO TRADE is a first-class result.**
@@ -15,7 +15,11 @@ edge right now, and is there a valid setup? If not, do nothing.* **NO TRADE is a
   `TRADING_LIVE_CONFIRM=YES_I_UNDERSTAND_THE_RISK`. `DeltaBroker` re-checks both itself.
 - Live code defaults to **TESTNET** (`DELTA_ENV`).
 - **No withdrawal functionality anywhere.** A test enforces this.
-- Every position has a **mandatory stop**. Live trading uses exchange-side bracket orders.
+- **Only defined-risk structures**: long calls and puts, and debit/credit vertical spreads. **No naked option
+  selling.** Every position's max loss is known at entry.
+- For spreads, **buy the long leg first**. If the short leg fails, keep the long leg, which is still defined risk.
+- Exits (premium stop, target, time exit, close-before-settlement) are managed by the engine. Exchange-side option
+  stop orders are UNVERIFIED.
 - The risk engine is deterministic, independent of research, and has the last word. Every decision is stored with its
   reason.
 - **Orders are throttled but never auto-retried**, and the circuit breaker never blocks them. If a send times out,

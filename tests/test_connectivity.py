@@ -63,7 +63,7 @@ def test_ip_not_whitelisted_reports_ip(mocked, fake_clock) -> None:
 
 def test_missing_watchlist_symbol_fails(mocked, fake_clock) -> None:
     s = Settings.from_env({})
-    public_mocks(mocked, fake_clock, products=PRODUCTS[:2])
+    public_mocks(mocked, fake_clock, products=PRODUCTS[:1])
     results = run_connectivity_check(s, client(fake_clock, s), require_credentials=False)
     wl = next(r for r in results if r.name == "watchlist products")
-    assert not wl.ok and "SOLUSD" in wl.detail
+    assert not wl.ok and "ETHUSD" in wl.detail
