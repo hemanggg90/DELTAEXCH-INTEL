@@ -366,8 +366,24 @@ VERIFIED (live), 2026-10-02.
 - **Candles continue after settlement:** flat bars repeating the last price with volume 0 (seen for 4 days after a
   26-Sep expiry). Any backtest must cut a contract's bars at its `settlement_time`.
 
+**Pricing convention** (VERIFIED live, 2026-10-02)
+- Black-Scholes with **r = 0, q = 0**, S = the spot index (`greeks.spot`), T in **365-day years** to the 12:00 UTC
+  expiry, and σ = `quotes.mark_iv` reproduces `mark_price`.
+- Checked on 546 live BTC options: median |BS − mark| / mark = 0.014%, 90th percentile 0.09%; |delta error| median 6e-5.
+- Premiums are **USD per 1 unit of the underlying** (per 1 BTC); a contract is `contract_value` (0.001 BTC) of that.
+- Option tickers have no `settlement_time` field: derive expiry from the symbol (`DDMMYY`, at 12:00 UTC).
+- `/v2/products` and `/v2/tickers` accept `underlying_asset_symbols=BTC,ETH`, and `/v2/products` accepts
+  comma-separated `contract_types`.
+
+**Settlement** (VERIFIED from 5 expiries, 2026-09-29 to 2026-10-01)
+- Expired products carry `settlement_price` = cash payoff per 1 unit; it is 0 when the option expires OTM.
+- The settlement index implied by ITM contracts (K ± settlement_price) is identical for every strike of an expiry.
+- It matches the **30-minute TWAP of the spot index ending at 12:00 UTC** within ~0.05%. Examples: ETH 2703.01 implied
+  vs 2703.07 TWAP; BTC 83941.47 vs 83940.20. The last 1-minute close and a 15-minute TWAP match worse.
+- The remaining difference is probably sampling (1-minute candles vs Delta's finer sampling). Treat it as an
+  approximation of the exact method.
+
 **UNVERIFIED**
-- The settlement price source (index TWAP?).
 - Option margin for sellers.
 - Whether options can carry exchange-side bracket orders.
 - Whether historical IV is available anywhere other than being inferred from traded prices.
