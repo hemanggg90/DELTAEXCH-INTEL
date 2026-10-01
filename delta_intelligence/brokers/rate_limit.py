@@ -65,6 +65,7 @@ class RateLimiter:
             self._auth_failed_until = 0.0
             self._last_ok_wall: float | None = None
             self._last_server_quota: dict | None = None
+            self._network_errors = 0
 
     # ---- budget ------------------------------------------------------------------------------------------------
     def _cap(self, kind: str) -> float:
@@ -158,6 +159,11 @@ class RateLimiter:
                 if self.clock() >= self._cooldown_until:
                     self._breaker_opens = 0
 
+    def record_network_error(self) -> None:
+        """Timeouts / dropped connections (counted for the health page; they never open the breaker)."""
+        with self._state:
+            self._network_errors += 1
+
     def record_server_quota(self, quota: dict) -> None:
         with self._state:
             self._last_server_quota = dict(quota)
@@ -202,6 +208,7 @@ class RateLimiter:
                 "auth_block_remaining": max(0.0, self._auth_failed_until - now),
                 "last_ok_age_sec": None if self._last_ok_wall is None else self.wall() - self._last_ok_wall,
                 "server_quota": self._last_server_quota,
+                "network_errors": self._network_errors,
                 "window_sec": window,
             }
 

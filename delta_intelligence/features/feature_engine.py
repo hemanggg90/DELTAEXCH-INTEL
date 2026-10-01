@@ -230,7 +230,10 @@ def compute_features(ohlcv: pd.DataFrame, timeframe: str = "5m", aux: AuxData | 
         out["has_funding_data"] = False
 
     if aux.oi is not None and len(aux.oi):
-        g = regular_grid(aux.oi.rename(columns={"close": "oi"}), aux.series_timeframe, ["oi"])
+        oi_in = aux.oi.rename(columns={"close": "oi"})
+        # Delta's OI series has rare zero bars (e.g. 2 in Nov 2025 - Oct 2026): a data glitch, not a real zero.
+        oi_in = oi_in.assign(oi=oi_in["oi"].where(oi_in["oi"] > 0))
+        g = regular_grid(oi_in, aux.series_timeframe, ["oi"])
         g["oi_change_pct_1h"] = g["oi"].pct_change(1, fill_method=None) * 100
         g["oi_change_pct_24h"] = g["oi"].pct_change(24, fill_method=None) * 100
         m = g["oi_change_pct_24h"].rolling(hourly_per_week, min_periods=48).mean()

@@ -256,7 +256,10 @@ class DeltaClient:
                     raise OrderStateUnknownError(
                         f"order request to {path} failed in transit ({type(exc).__name__}); the order MAY have been "
                         "accepted - reconcile by client_order_id before doing anything else") from None
+                self.limiter.record_network_error()
                 if attempt < max_attempts:
+                    log_event("delta_client", f"network {type(exc).__name__} on {path}; retry {attempt}/{max_attempts - 1}",
+                              level="WARNING")
                     self.sleep(limits.backoff_sec * 2 ** (attempt - 1))
                     continue
                 raise DeltaNetworkError(f"network error calling Delta {path}: {type(exc).__name__}") from None

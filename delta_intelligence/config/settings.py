@@ -205,6 +205,8 @@ class DeltaLimits:
             auth_failure_cooldown_sec=e.float("DELTA_AUTH_FAILURE_COOLDOWN_SEC", d.auth_failure_cooldown_sec),
             ticker_cache_ttl_sec=e.float("DELTA_TICKER_CACHE_TTL_SEC", d.ticker_cache_ttl_sec),
             products_cache_ttl_sec=e.float("DELTA_PRODUCTS_CACHE_TTL_SEC", d.products_cache_ttl_sec),
+            connect_timeout_sec=e.float("DELTA_CONNECT_TIMEOUT_SEC", d.connect_timeout_sec),
+            read_timeout_sec=e.float("DELTA_READ_TIMEOUT_SEC", d.read_timeout_sec),
         )
 
 
