@@ -33,13 +33,16 @@ class SelectorConfig:
     dte_multiple: float = 2.5
     expiry_guard_hours: float = 2.0
     strangle_steps: int = 1
+    max_dte_days: float = 45.0  # never pick an expiry further out (e.g. before an underlying's options were listed)
 
 
 def choose_expiry(now: pd.Timestamp, expected_hold_hours: float, expiries, cfg: SelectorConfig) -> pd.Timestamp | None:
-    """Nearest expiry with TTE >= dte_multiple × hold and TTE − guard >= hold."""
+    """Nearest expiry with TTE >= dte_multiple × hold and TTE − guard >= hold, and at most `max_dte_days` away."""
     now = pd.Timestamp(now)
     for e in sorted(pd.Timestamp(x) for x in expiries):
         tte_h = (e - now).total_seconds() / 3600.0
+        if tte_h > cfg.max_dte_days * 24:
+            return None
         if tte_h >= cfg.dte_multiple * expected_hold_hours and tte_h - cfg.expiry_guard_hours >= expected_hold_hours:
             return e
     return None

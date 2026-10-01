@@ -184,6 +184,9 @@ def run_option_backtest(strategy: Strategy, frame: pd.DataFrame, market: OptionM
             continue
         basis = spot / close[i]
         strikes = market.listed_strikes.get(expiry, np.array([]))
+        if not len(strikes):
+            skipped["no_listed_options"] += 1  # e.g. XAUT before its options were listed (~Jul 2026)
+            continue
 
         def abs_delta(kind, k, _e=expiry, _i=i, _spot=spot, _t=t_entry):
             iv, _ = leg_iv(_t, k, _e, _spot, _i)

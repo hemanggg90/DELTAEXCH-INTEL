@@ -36,6 +36,8 @@ def test_expiry_respects_dte_multiple_and_guard() -> None:
     assert choose_expiry(now, 4.5, EXPIRIES, CFG) == EXPIRIES[1]  # 10 < 2.5*4.5 -> tomorrow
     assert choose_expiry(pd.Timestamp("2026-09-01T10:30Z"), 0.5, EXPIRIES, CFG) == EXPIRIES[1]  # 1.5h left < 2h guard
     assert choose_expiry(now, 48, EXPIRIES, CFG) is None  # nothing far enough
+    far = [pd.Timestamp("2026-12-25T12:00Z")]
+    assert choose_expiry(now, 2.0, far, CFG) is None  # first listed expiry months away: no trade
 
 
 def test_xaut_expiry_is_2130_ist() -> None:
