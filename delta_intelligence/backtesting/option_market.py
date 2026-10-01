@@ -76,26 +76,53 @@ class OptionMarketModel:
                 return name
         return None
 
-    def atm_iv(self, at: pd.Timestamp, t_hours: float) -> float | None:
-        name = self.bucket_for(t_hours)
-        if name is None or name not in self._iv:
+    def _asof(self, name: str, at64) -> float | None:
+        if name not in self._iv:
             return None
         avail, vals = self._iv[name]
-        at64 = _ts64(at)
         i = np.searchsorted(avail, at64, side="right") - 1
         if i < 0:
             return None
         age_h = (at64 - avail[i]) / np.timedelta64(1, "h")
         return float(vals[i]) if age_h <= self.max_iv_age_hours else None
 
-    def leg_iv(self, at: pd.Timestamp, t_hours: float, strike: float, spot: float) -> float | None:
-        atm = self.atm_iv(at, t_hours)
+    def atm_iv_with_source(self, at: pd.Timestamp, t_hours: float, allow_neighbor: bool = True
+                           ) -> tuple[float | None, bool]:
+        """(ATM IV as-of `at` for the maturity bucket of `t_hours`, exact_bucket). If that bucket has no fresh value and
+        `allow_neighbor`, the nearest maturity bucket with a fresh value is used (shorter first) and exact=False. Such
+        trades are labelled MODEL_REAL_IV_ADJ_BUCKET."""
+        name = self.bucket_for(t_hours)
+        if name is None:
+            return None, False
+        at64 = _ts64(at)
+        v = self._asof(name, at64)
+        if v is not None or not allow_neighbor:
+            return v, True
+        names = [b[0] for b in T_BUCKETS_H]
+        k = names.index(name)
+        for dist in range(1, len(names)):
+            for j in (k - dist, k + dist):
+                if 0 <= j < len(names):
+                    v = self._asof(names[j], at64)
+                    if v is not None:
+                        return v, False
+        return None, False
+
+    def atm_iv(self, at: pd.Timestamp, t_hours: float) -> float | None:
+        return self.atm_iv_with_source(at, t_hours, allow_neighbor=False)[0]
+
+    def leg_iv_with_source(self, at: pd.Timestamp, t_hours: float, strike: float, spot: float,
+                           allow_neighbor: bool = True) -> tuple[float | None, bool]:
+        atm, exact = self.atm_iv_with_source(at, t_hours, allow_neighbor)
         if atm is None:
-            return None
+            return None, False
         k = math.log(strike / spot)
         sm = self.smile.get(self.bucket_for(t_hours) or "", {})
         iv = atm + sm.get("slope", 0.0) * k + sm.get("curvature", 0.0) * k * k
-        return float(min(max(iv, 0.05), 3.0))
+        return float(min(max(iv, 0.05), 3.0)), exact
+
+    def leg_iv(self, at: pd.Timestamp, t_hours: float, strike: float, spot: float) -> float | None:
+        return self.leg_iv_with_source(at, t_hours, strike, spot, allow_neighbor=False)[0]
 
     def spot_at_close(self, bar_open: pd.Timestamp) -> float | None:
         """Index close of the bar opening at `bar_open` (i.e. the spot at that bar's close)."""

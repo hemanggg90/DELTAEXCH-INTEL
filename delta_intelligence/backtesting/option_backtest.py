@@ -23,6 +23,8 @@ For each setup (one trade at a time per strategy):
 
 **Premium source label per trade:**
 - `MODEL_REAL_IV`: Black-Scholes at the as-of IV inferred from real Delta option trades;
+- `MODEL_REAL_IV_ADJ_BUCKET`: as above, but the IV comes from the nearest maturity bucket because the exact one had no
+  fresh observation (e.g. 30-54 h, where only daily contracts' last 32 h were fetched);
 - `MODEL_RV_PROXY`: no IV observed within the age limit, so the realised volatility of the index stands in (only if
   `allow_rv_proxy`).
 
@@ -55,6 +57,7 @@ class OptionBacktestConfig:
     breakeven_margin: float = 0.25
     apply_breakeven_gate: bool = True
     allow_rv_proxy: bool = False
+    allow_adjacent_bucket: bool = True  # use the nearest maturity bucket's IV when the exact bucket has none (labelled)
     units: float = 1.0  # underlying units per leg (R is size-invariant up to tick/fee rounding)
     commission_rate: float = 0.0001
     premium_cap_rate: float = 0.035
@@ -147,10 +150,10 @@ def run_option_backtest(strategy: Strategy, frame: pd.DataFrame, market: OptionM
 
     def leg_iv(at, kstrike, expiry, spot, i):
         t_h = (expiry - at).total_seconds() / 3600.0
-        iv = market.leg_iv(at, t_h, kstrike, spot)
+        iv, exact = market.leg_iv_with_source(at, t_h, kstrike, spot, allow_neighbor=cfg.allow_adjacent_bucket)
         if iv is None and cfg.allow_rv_proxy and np.isfinite(rv[i]) and rv[i] > 0:
             return float(rv[i]), "MODEL_RV_PROXY"
-        return iv, "MODEL_REAL_IV"
+        return iv, ("MODEL_REAL_IV" if exact else "MODEL_REAL_IV_ADJ_BUCKET")
 
     def fill(leg_kind, k, expiry, at, spot, buy, i):
         iv, src = leg_iv(at, k, expiry, spot, i)
@@ -198,7 +201,8 @@ def run_option_backtest(strategy: Strategy, frame: pd.DataFrame, market: OptionM
         if any(e is None for e in entry):
             skipped["no_iv"] += 1
             continue
-        source = "MODEL_RV_PROXY" if any(e[3] == "MODEL_RV_PROXY" for e in entry) else "MODEL_REAL_IV"
+        srcs = {e[3] for e in entry}
+        source = next((s for s in ("MODEL_RV_PROXY", "MODEL_REAL_IV_ADJ_BUCKET") if s in srcs), "MODEL_REAL_IV")
         units = [st.units(leg) for leg in st.legs]
         entry_px = [e[0] for e in entry]
         fee_in = sum(leg_fee(p, spot, u, cfg.commission_rate, cfg.premium_cap_rate, cfg.gst_rate)

@@ -36,7 +36,10 @@ from delta_intelligence.utils.logging_utils import log_event
 
 TF = "5m"
 TF_SEC = 300
-T_BUCKETS_H: tuple[tuple[str, float, float], ...] = (("0_6h", 0.25, 6.0), ("6_30h", 6.0, 30.0), ("30_54h", 30.0, 54.0))
+T_BUCKETS_H: tuple[tuple[str, float, float], ...] = (
+    ("0_6h", 0.25, 6.0), ("6_30h", 6.0, 30.0), ("30_54h", 30.0, 54.0),
+    ("54_168h", 54.0, 168.0), ("168_720h", 168.0, 720.0),  # weekly / monthly (long-dated pipeline)
+)
 ATM_BAND = 0.01  # |ln(K/S)| <= 1% counts as at-the-money for the ATM series
 
 
@@ -178,8 +181,10 @@ def fetch_expiry_candles(make_client, store: IvHistoryStore, selected: pd.DataFr
 
 
 # ---- 4. IV observations ----------------------------------------------------------------------------------------------
-def compute_iv_observations(candles: pd.DataFrame, meta: pd.DataFrame, index: pd.DataFrame) -> pd.DataFrame:
-    """IV per traded bar. Joins on symbol (strike/kind/expiry) and on the index bar with the SAME open time."""
+def compute_iv_observations(candles: pd.DataFrame, meta: pd.DataFrame, index: pd.DataFrame,
+                            tf_seconds: int = TF_SEC) -> pd.DataFrame:
+    """IV per traded bar. Joins on symbol (strike/kind/expiry) and on the index bar with the SAME open time (both
+    series at the same resolution `tf_seconds`)."""
     if not len(candles):
         return pd.DataFrame()
     df = candles[candles["volume"].fillna(0) > 0].merge(
@@ -188,7 +193,7 @@ def compute_iv_observations(candles: pd.DataFrame, meta: pd.DataFrame, index: pd
     df["timestamp"] = df["timestamp"].astype("datetime64[ns, UTC]")
     idx = idx.assign(timestamp=idx["timestamp"].astype("datetime64[ns, UTC]"))
     df = df.merge(idx, on="timestamp", how="inner")
-    df["known_at"] = df["timestamp"] + pd.Timedelta(seconds=TF_SEC)
+    df["known_at"] = df["timestamp"] + pd.Timedelta(seconds=tf_seconds)
     secs = (df["expiry"].astype("datetime64[ns, UTC]") - df["known_at"]).dt.total_seconds()
     df["t_hours"] = secs / 3600.0
     df["log_moneyness"] = np.log(df["strike"] / df["spot"])
@@ -280,3 +285,96 @@ def settlement_index_twap(index: pd.DataFrame, expiry: pd.Timestamp) -> float | 
     """Model of Delta's settlement: mean of the 5m index closes in the 30 minutes before 12:00 UTC."""
     win = index[(index["timestamp"] >= expiry - pd.Timedelta(minutes=30)) & (index["timestamp"] < expiry)]
     return float(win["close"].mean()) if len(win) >= 3 else None
+
+
+# ---- long-dated (weekly / monthly) pipeline -------------------------------------------------------------------------
+LONG_TF = "1h"
+LONG_TF_SEC = 3600
+
+
+def thin_strikes(strikes: np.ndarray, ref: float, step_frac: float = 0.01) -> np.ndarray:
+    """Keep listed strikes nearest a grid of `step_frac` × ref spacing (so a near-ATM strike, |k| <= ~0.5 step, always
+    exists without fetching every listed strike)."""
+    strikes = np.sort(np.unique(strikes))
+    if not len(strikes):
+        return strikes
+    step = ref * step_frac
+    grid = np.arange(strikes[0], strikes[-1] + step, step)
+    picked = {float(strikes[np.argmin(np.abs(strikes - g))]) for g in grid}
+    return np.array(sorted(picked))
+
+
+def select_long_dated(meta: pd.DataFrame, index_by_underlying: dict[str, pd.DataFrame], window_days: float = 35.0,
+                      gap_hours: float = 32.0, band: float = 0.05, step_frac: float = 0.01) -> pd.DataFrame:
+    """Friday expiries (weekly/monthly contracts that trade for weeks), strikes within the index range over
+    [expiry − window, expiry − gap] ± band, thinned to ~1% spacing."""
+    keep = []
+    for (u, expiry), grp in meta.groupby(["underlying", "expiry"]):
+        if expiry.day_name() != "Friday":
+            continue
+        idx = index_by_underlying.get(u)
+        if idx is None:
+            continue
+        win = idx[(idx["timestamp"] >= expiry - pd.Timedelta(days=window_days))
+                  & (idx["timestamp"] < expiry - pd.Timedelta(hours=gap_hours))]
+        if not len(win):
+            continue
+        lo, hi = win["low"].min() * (1 - band), win["high"].max() * (1 + band)
+        inband = grp[(grp["strike"] >= lo) & (grp["strike"] <= hi)]
+        chosen = thin_strikes(inband["strike"].to_numpy(), float(win["close"].median()), step_frac)
+        keep.append(inband[inband["strike"].isin(chosen)])
+    return pd.concat(keep, ignore_index=True) if keep else meta.iloc[0:0]
+
+
+def long_dated_path(store: IvHistoryStore, underlying: str, expiry: pd.Timestamp) -> Path:
+    return store.root / "candles_1h" / underlying / f"{expiry:%Y-%m-%d}.parquet"
+
+
+def fetch_long_dated(make_client, store: IvHistoryStore, selected: pd.DataFrame, window_days: float = 35.0,
+                     gap_hours: float = 32.0, workers: int = 6, progress=None) -> dict:
+    """1h candles over [expiry − window, expiry − gap] per contract, cached per expiry (only when complete)."""
+    groups = [(u, e, g) for (u, e), g in selected.groupby(["underlying", "expiry"])
+              if not long_dated_path(store, u, e).exists()]
+    stats = {"expiries": len(groups), "contracts": 0, "errors": 0}
+    local = threading.local()
+
+    def client():
+        if not hasattr(local, "c"):
+            local.c = make_client()
+        return local.c
+
+    def work(u, e, g):
+        frames, errors = [], 0
+        start = int((e - pd.Timedelta(days=window_days)).timestamp())
+        end = int((e - pd.Timedelta(hours=gap_hours)).timestamp())
+        for sym in g["symbol"]:
+            try:
+                rows = client().get_candles(sym, LONG_TF, start, end)
+                frames.append(candles_to_frame(rows).assign(symbol=sym))
+            except Exception as exc:
+                errors += 1
+                log_event("iv_history", f"1h candles for {sym} failed: {exc}", level="WARNING")
+        if errors == 0:
+            df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
+                columns=["timestamp", "open", "high", "low", "close", "volume", "symbol"])
+            store.write(df, long_dated_path(store, u, e))
+        return len(g), errors
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = [pool.submit(work, u, e, g) for u, e, g in groups]
+        for i, fut in enumerate(as_completed(futures), 1):
+            n, err = fut.result()
+            stats["contracts"] += n
+            stats["errors"] += err
+            if progress:
+                progress(i, len(futures))
+    return stats
+
+
+def index_hourly(index_5m: pd.DataFrame) -> pd.DataFrame:
+    """1h index bars from 5m bars (bar-open labelled). Only complete hours (12 bars) are kept."""
+    s = index_5m.set_index("timestamp")
+    agg = s.resample("1h", label="left", closed="left").agg({"open": "first", "high": "max", "low": "min",
+                                                             "close": "last"})
+    n = s["close"].resample("1h", label="left", closed="left").count()
+    return agg[n == 12].dropna().reset_index()

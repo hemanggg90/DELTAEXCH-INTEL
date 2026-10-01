@@ -59,7 +59,11 @@ def main() -> int:
     print("[2/5] listing expired options ...", flush=True)
     meta = ivh.list_expired_options(client, underlyings, since)
     meta = meta[meta["expiry"] <= pd.Timestamp(until)]
+    if store.meta_path().exists():  # merge: a run for some underlyings must not drop the others
+        old = pd.read_parquet(store.meta_path())
+        meta = pd.concat([old[~old["symbol"].isin(meta["symbol"])], meta], ignore_index=True)
     ivh.IvHistoryStore.write(meta, store.meta_path())
+    meta = meta[meta["underlying"].isin(underlyings)]
     print(f"      {len(meta)} expired contracts, {meta.groupby(['underlying', 'expiry']).ngroups} expiries")
 
     selected = ivh.select_contracts(meta, index, args.band, args.window_hours)

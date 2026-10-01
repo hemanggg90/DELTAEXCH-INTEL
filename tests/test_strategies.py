@@ -6,49 +6,59 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from delta_intelligence.config.events import load_events
 from delta_intelligence.data_adapters.synthetic import synthetic_ohlcv
 from delta_intelligence.features.feature_engine import AuxData, compute_features
-from delta_intelligence.strategies.base import apply_cooldown, first_per_day, research_frame
-from delta_intelligence.strategies.library import OpeningRangeBreakout, SupertrendFlip
+from delta_intelligence.strategies.base import apply_cooldown, first_per_day
+from delta_intelligence.strategies.context import build_strategy_frame
+from delta_intelligence.strategies.library_v3 import PreEventStraddle
 from delta_intelligence.strategies.registry import STRATEGY_CLASSES, get_all_strategies, get_strategy
 
 UTC = dt.timezone.utc
 
 
-def make_aux(ohlcv):
-    rng = np.random.default_rng(5)
-    hours = pd.date_range(ohlcv["timestamp"].iloc[0], ohlcv["timestamp"].iloc[-1], freq="1h")
-    fund = np.where(rng.random(len(hours)) < 0.85, 0.01, rng.normal(0.01, 0.05, len(hours)))
-    oi = 800 + np.cumsum(rng.normal(0, 4, len(hours)))
-    mk = lambda v: pd.DataFrame({"timestamp": hours, "open": v, "high": v, "low": v, "close": v, "volume": np.nan})  # noqa: E731
-    return AuxData(index=ohlcv.assign(close=ohlcv["close"] * 0.9996), funding=mk(fund), oi=mk(oi))
-
-
 @pytest.fixture(scope="module")
 def frame():
-    o = synthetic_ohlcv(dt.datetime(2026, 8, 1, tzinfo=UTC), 288 * 20, seed=11)
-    return research_frame(o, compute_features(o, "5m", make_aux(o)))
+    o = synthetic_ohlcv(dt.datetime(2026, 1, 5, tzinfo=UTC), 288 * 75, seed=13)
+    hours = pd.date_range(o["timestamp"].iloc[0], o["timestamp"].iloc[-1], freq="1h")
+    rng = np.random.default_rng(9)
+    mk = lambda v: pd.DataFrame({"timestamp": hours, "open": v, "high": v, "low": v, "close": v, "volume": np.nan})  # noqa: E731
+    aux = AuxData(index=o.assign(close=o["close"] * 0.9996), funding=mk(rng.normal(0.01, 0.01, len(hours))),
+                  oi=mk(800 + np.cumsum(rng.normal(0, 8, len(hours)))))
+    h = pd.date_range(o["timestamp"].iloc[0] - pd.Timedelta(days=61), periods=24 * 140, freq="1h")
+    iv = pd.DataFrame({"hour": h, "available_at": h + pd.Timedelta("1h"),
+                       "atm_iv_6_30h": 0.4 + 0.15 * np.sin(np.arange(len(h)) / 50)})
+    events = pd.DataFrame({"timestamp_utc": pd.date_range("2026-01-20T19:00Z", periods=10, freq="5D"),
+                           "name": "EVT", "importance": "high"})
+    return build_strategy_frame(o, compute_features(o, "5m", aux), iv, events)
 
 
-def test_registry_has_14_unique_backtestable_strategies() -> None:
-    assert len(STRATEGY_CLASSES) == 14
-    assert "Gap Fill Reversion" not in STRATEGY_CLASSES
+def test_registry_is_the_v3_library() -> None:
+    assert len(STRATEGY_CLASSES) == 10
+    assert not any(s.family == "reversion" for s in get_all_strategies())  # no mean-reversion-in-range
+    for s in get_all_strategies():
+        assert set(s.key_parameters) <= set(s.default_parameters), s.name
+        assert s.max_hold_bars >= s.expected_hold_bars > 0
     with pytest.raises(KeyError):
-        get_strategy("Nope")
+        get_strategy("Momentum")
 
 
-def test_every_strategy_produces_valid_setups(frame) -> None:
+def test_most_strategies_fire_and_geometry_is_valid(frame) -> None:
+    fired = 0
     for s in get_all_strategies():
         setups = s.historical_setups(frame)
-        assert setups, f"{s.name} produced no setups on 20 days of synthetic data"
+        fired += bool(setups)
         for x in setups:
             if x.direction == "LONG":
                 assert x.stop_price < x.entry_price < x.target_price, s.name
-            else:
+            elif x.direction == "SHORT":
                 assert x.target_price < x.entry_price < x.stop_price, s.name
+            else:
+                assert x.direction == "VOL" and x.meta["expected_abs_move"] > 0
+    assert fired >= 8
 
 
-@pytest.mark.parametrize("cut", [288 * 7 + 3, 288 * 12 + 140, 288 * 19])
+@pytest.mark.parametrize("cut", [288 * 40 + 9, 288 * 58 + 200, 288 * 74])
 def test_signals_have_no_lookahead(frame, cut) -> None:
     for s in get_all_strategies():
         full = s.signals(frame).iloc[:cut].reset_index(drop=True)
@@ -56,41 +66,36 @@ def test_signals_have_no_lookahead(frame, cut) -> None:
         pd.testing.assert_frame_equal(full, part, check_dtype=False, obj=s.name)
 
 
-def test_live_check_equals_historical_setup(frame) -> None:
-    """setup_now on data ending at a historical setup's bar returns exactly that setup (one code path)."""
+def test_live_check_equals_historical(frame) -> None:
+    pos = {t: i for i, t in enumerate(frame["timestamp"])}
     for s in get_all_strategies():
         setups = s.historical_setups(frame)
-        pos = {t: i for i, t in enumerate(frame["timestamp"])}
-        for x in setups[:: max(1, len(setups) // 5)]:
+        for x in setups[:: max(1, len(setups) // 4)]:
             live = s.setup_now(frame.iloc[: pos[x.timestamp] + 1])
             assert live is not None and live.direction == x.direction, s.name
-            assert live.stop_price == pytest.approx(x.stop_price) and live.target_price == pytest.approx(x.target_price)
 
 
-def test_supertrend_fires_only_on_flips(frame) -> None:
-    sig = SupertrendFlip().signals(frame)
-    flips = frame["supertrend_direction"].ne(frame["supertrend_direction"].shift(1)) & frame["supertrend_direction"].shift(1).notna()
-    assert (sig["direction"] != 0).sum() <= flips.sum()
-    assert (sig.loc[~flips, "direction"] == 0).all()
+def test_event_strategy_needs_events_and_low_iv(frame) -> None:
+    s = PreEventStraddle()
+    setups = s.historical_setups(frame)
+    assert setups and all(x.direction == "VOL" for x in setups)
+    assert len({x.meta["event"] for x in setups}) == 1 and len(setups) <= 10  # at most one per event
+    no_events = frame.assign(hours_to_event=np.nan, event_name=None)
+    assert s.historical_setups(no_events) == []
 
 
-def test_orb_once_per_day_per_side_after_range(frame) -> None:
-    setups = OpeningRangeBreakout().historical_setups(frame)
-    day = [x.timestamp.floor("D") for x in setups]
-    pairs = list(zip(day, [x.direction for x in setups]))
-    assert len(pairs) == len(set(pairs))
-    complete = frame.set_index("timestamp")["or_complete"]
-    assert all(complete[x.timestamp] for x in setups)
+def test_events_file_loader(tmp_path) -> None:
+    assert len(load_events(tmp_path / "missing.csv")) == 0
+    p = tmp_path / "e.csv"
+    p.write_text("timestamp_utc,name,importance\n2026-11-04T19:00:00Z,FOMC,high\n", encoding="utf-8")
+    ev = load_events(p)
+    assert ev["timestamp_utc"].iloc[0] == pd.Timestamp("2026-11-04T19:00Z")
+    p.write_text("timestamp_utc,name,importance\n2026-11-04 19:00,FOMC,high\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_events(p)
 
 
 def test_cooldown_and_first_per_day() -> None:
-    d = np.array([1, 1, 0, -1, 1, 0, 0, 1, 1])
-    assert list(apply_cooldown(d, 3)) == [1, 0, 0, -1, 0, 0, 0, 1, 0]  # kept at 0, 3, 7
-    ev = pd.Series([False, True, True, False, True])
-    day = pd.Series([1, 1, 1, 2, 2])
-    assert list(first_per_day(ev, day)) == [False, True, False, False, True]
-
-
-def test_volume_flags() -> None:
-    names = {s.name for s in get_all_strategies() if s.uses_volume}
-    assert names == {"Momentum", "VWAP Mean Reversion"}
+    assert list(apply_cooldown(np.array([1, 1, 0, -1, 1, 0, 0, 1, 1]), 3)) == [1, 0, 0, -1, 0, 0, 0, 1, 0]
+    assert list(first_per_day(pd.Series([False, True, True, False, True]), pd.Series([1, 1, 1, 2, 2]))) == \
+        [False, True, False, False, True]

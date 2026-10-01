@@ -1,10 +1,11 @@
-"""Strategy registry. Adding a strategy = subclass `Strategy` in library.py and list it in ALL_STRATEGIES."""
+"""Strategy registry (plan v3). The old 14-strategy library (no edge; see docs/research/P3_REPORT.md) lives in
+legacy_v2_library.py for the record and is NOT registered."""
 from __future__ import annotations
 
 from delta_intelligence.strategies.base import Strategy
-from delta_intelligence.strategies.library import ALL_STRATEGIES
+from delta_intelligence.strategies.library_v3 import V3_STRATEGIES
 
-STRATEGY_CLASSES: dict[str, type[Strategy]] = {cls.name: cls for cls in ALL_STRATEGIES}
+STRATEGY_CLASSES: dict[str, type[Strategy]] = {cls.name: cls for cls in V3_STRATEGIES}
 
 
 def get_all_strategies(parameters_by_name: dict | None = None) -> list[Strategy]:
