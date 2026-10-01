@@ -74,17 +74,20 @@ class DataManager:
 
     # ---- public API ----------------------------------------------------------------------------------------------
     def get_ohlcv(self, symbol: str, timeframe: str, start: dt.datetime, end: dt.datetime | None = None,
-                  force_refresh: bool = False) -> tuple[pd.DataFrame, dict]:
-        """(candles, metadata) for closed bars in [start, end]. Metadata includes source and the quality report."""
+                  force_refresh: bool = False, check_volume: bool | None = None) -> tuple[pd.DataFrame, dict]:
+        """(candles, metadata) for closed bars in [start, end]. Metadata includes source and the quality report.
+        Index symbols (".DE...") carry no volume, so volume is not checked for them by default."""
+        if check_volume is None:
+            check_volume = not symbol.startswith(".")
         start = ensure_utc(start)
         end = ensure_utc(end or self.now())
         if self.csv is not None and self.csv.path_for(symbol, timeframe) is not None:
             df = self.csv.get_ohlcv(symbol, timeframe, start, end)
             if len(df):
-                return self._finalize(df, symbol, timeframe, "csv", check_volume=True)
+                return self._finalize(df, symbol, timeframe, "csv", check_volume=check_volume)
         df, source, refresh_error = self._from_delta(symbol, timeframe, start, end, force_refresh,
                                                     fetch=lambda s, e: self.delta.get_ohlcv(symbol, timeframe, s, e))
-        return self._finalize(df, symbol, timeframe, source, refresh_error=refresh_error, check_volume=True)
+        return self._finalize(df, symbol, timeframe, source, refresh_error=refresh_error, check_volume=check_volume)
 
     def get_series(self, kind: str, symbol: str, timeframe: str, start: dt.datetime, end: dt.datetime | None = None,
                    force_refresh: bool = False) -> tuple[pd.DataFrame, dict]:

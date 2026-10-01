@@ -207,6 +207,8 @@ VERIFIED (docs + live). This endpoint is public.
 - VERIFIED (docs): the WebSocket `funding_rate` channel carries `next_funding_realization` (field `nfr`, in µs).
   Prefer it over computing the time.
 - **UNVERIFIED:** the units of `funding_rate`. Values look like `0.0052`; the working assumption is *percent per 8 h*.
+  Supporting evidence (2026-10-02): `FUNDING:BTCUSD` sat at exactly **0.01** for most of Aug-Sep 2026. That is the
+  common 0.01%-per-8h baseline (interest component), consistent with percent units. It is still not confirmed.
   Confirm against the exchange UI or a real funding transaction on testnet before using in P&L.
 - **UNVERIFIED:** whether the value during period *[t, t+8h)* is the rate charged at *t* or the rate that will be
   charged at *t+8h*. Funding P&L in the backtest must state which convention it uses.

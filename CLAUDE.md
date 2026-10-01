@@ -69,5 +69,7 @@ pip install -r requirements-dev.txt
 python -m pytest            # whole suite, offline
 streamlit run app.py        # dashboard (from P6)
 python scripts/check_delta.py   # connectivity: time sync, auth, IP whitelist (read-only)
-python scripts/fetch_candles.py BTCUSD --days 60 --series FUNDING OI MARK   # fill the Parquet cache (public data)
+python scripts/fetch_candles.py BTCUSD ETHUSD .DEXBTUSD .DEETHUSD --days 60   # fill the Parquet cache (public data)
+python scripts/fetch_candles.py BTCUSD ETHUSD --days 68 --series FUNDING OI --series-timeframe 1h
+python scripts/regime_report.py --days 60   # features + regimes on real data, with a no-look-ahead re-check
 ```
