@@ -15,8 +15,9 @@ So the backtest and the live check are the same code path by construction.
 `frame` is the OHLCV of the underlying's perp merged with its features (see `research_frame`). Signals are judged at
 a bar's CLOSE; a trade can start at that close at the earliest.
 
-Strategies only propose a direction and underlying stop/target. The option structure that expresses the view is
-chosen separately (`default_structure`), and the risk engine has the final word.
+Strategies only propose a direction (or a volatility view) and underlying stop/target. The option BOUGHT to express
+it is chosen by the selector (`policy`, plus the expiry implied by `expected_hold_bars`), and the risk engine has the
+final word.
 """
 from __future__ import annotations
 
@@ -26,7 +27,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-STRUCTURES = ("LONG_OPTION", "DEBIT_SPREAD", "CREDIT_SPREAD")
+POLICIES = ("LONG_OPTION", "LONG_STRADDLE", "LONG_STRANGLE")  # buying only (plan v3)
+STRUCTURES = POLICIES  # compatibility alias
 
 
 @dataclass
@@ -74,8 +76,16 @@ class Strategy(abc.ABC):
     family: str = ""  # trend / breakout / reversion / derivatives
     required_features: tuple[str, ...] = ()
     uses_volume: bool = False
-    default_structure: str = "LONG_OPTION"
+    policy: str = "LONG_OPTION"  # LONG_OPTION / LONG_STRADDLE / LONG_STRANGLE
+    expected_hold_bars: int = 24  # drives expiry choice (DTE >= multiple x hold)
+    max_hold_bars: int = 48  # time stop
+    premium_check_every: int = 1  # bars between premium-stop checks (swing strategies check less often)
+    is_event: bool = False  # exempt from the IV-percentile gate
     default_parameters: dict = {}
+
+    @property
+    def default_structure(self) -> str:  # compatibility alias
+        return self.policy
 
     def __init__(self, parameters: dict | None = None):
         self.parameters = {**self.default_parameters, **(parameters or {})}

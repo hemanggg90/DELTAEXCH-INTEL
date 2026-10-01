@@ -1,9 +1,10 @@
 # CLAUDE.md - delta-intelligence
 
-delta-intelligence is research-first strategy intelligence and execution for **Delta Exchange India BTC/ETH OPTIONS**
-(options-only since 2026-10-02; perp and index candles are signal inputs only). It is one Streamlit app, ported from `nifty-intelligence`. Read `docs/REFERENCE_README.md` for the
+delta-intelligence is research-first strategy intelligence and execution for **Delta Exchange India options, BUYING ONLY**
+(plan v3, 2026-10-02). It buys calls and puts, plus long straddles/strangles, on BTC, ETH and XAUT. Perp, index,
+funding and OI data are signal inputs only. It is one Streamlit app, ported from `nifty-intelligence`. Read `docs/REFERENCE_README.md` for the
 reference design and `docs/DELTA_API_NOTES.md` for verified exchange facts.
-The approved phased plan (v2, options-only) lives at `~/.claude/plans/replicated-tickling-pixel.md`.
+The approved phased plan (v3, options buying only) lives at `~/.claude/plans/replicated-tickling-pixel.md`.
 
 The system answers one question: *which validated strategy has the strongest statistically validated, net-of-cost
 edge right now, and is there a valid setup? If not, do nothing.* **NO TRADE is a first-class result.**
@@ -15,11 +16,17 @@ edge right now, and is there a valid setup? If not, do nothing.* **NO TRADE is a
   `TRADING_LIVE_CONFIRM=YES_I_UNDERSTAND_THE_RISK`. `DeltaBroker` re-checks both itself.
 - Live code defaults to **TESTNET** (`DELTA_ENV`).
 - **No withdrawal functionality anywhere.** A test enforces this.
-- **Only defined-risk structures**: long calls and puts, and debit/credit vertical spreads. **No naked option
-  selling.** Every position's max loss is known at entry.
-- For spreads, **buy the long leg first**. If the short leg fails, keep the long leg, which is still defined risk.
-- Exits (premium stop, target, time exit, close-before-settlement) are managed by the engine. Exchange-side option
-  stop orders are UNVERIFIED.
+- **BUYING ONLY.** Allowed orders are buy-to-open, and sell-to-close of an existing long up to the held size.
+  Sell-to-open is rejected in THREE places:
+  - `options/structures.py`: short legs and spreads can't be constructed;
+  - `brokers/order_guard.py`: called by every broker before any order;
+  - the risk engine.
+
+  Live sells also go with `reduce_only`. Max loss = premium paid + fees.
+- **Exits** are managed by the engine: underlying invalidation, premium stop (−35%), strategy time stop, forced exit
+  before the expiry guard (2 h).
+- **Strategy acceptance:** ≥ 200 trades, positive out-of-sample net R, stable under ±20% parameter changes, works on
+  ≥ 2 underlyings. Never tune a strategy before it passes. Report failures as they are.
 - The risk engine is deterministic, independent of research, and has the last word. Every decision is stored with its
   reason.
 - **Orders are throttled but never auto-retried**, and the circuit breaker never blocks them. If a send times out,

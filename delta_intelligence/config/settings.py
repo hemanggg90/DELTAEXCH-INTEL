@@ -96,46 +96,60 @@ class _Env:
 
 @dataclass(frozen=True)
 class RiskLimits:
-    """Options-only risk limits.
+    """Risk limits for the BUYING-ONLY options system.
 
-    Approved by the user on 2026-10-01 (account limits) and 2026-10-02 (option limits). Change only with the user's
-    agreement. Every structure is defined-risk, so "risk per trade" is the structure's max loss plus fees.
+    Approved by the user on 2026-10-01 and 2026-10-02 (plan v3). Values marked DEFAULT were proposed by the assistant
+    and flagged to the user. Change only with the user's agreement.
     """
 
-    max_risk_per_trade_pct: float = 0.5
-    max_daily_loss_pct: float = 2.0
+    max_premium_per_trade_pct: float = 0.5  # full-premium loss incl. fees, % of equity (spec range 0.5-1)
+    max_daily_loss_pct: float = 2.0  # resets 00:00 IST
     max_drawdown_pct: float = 8.0
     max_trades_per_day: int = 6
-    max_strategy_exposure_pct: float = 10.0
-    max_portfolio_exposure_pct: float = 20.0  # sum of open structures' max losses
     max_concurrent_positions: int = 3
-    min_relative_volume: float = 0.3  # of the underlying
-    # Options (2026-10-02)
-    min_hours_to_expiry: float = 6.0  # otherwise roll to the next daily expiry
-    close_before_settlement_min: int = 30  # exit by 17:00 IST for the 17:30 IST settlement
-    max_leg_spread_pct: float = 10.0  # bid/ask spread as % of mid, per leg
-    max_iv_to_rv_for_debit: float = 1.5  # veto debit structures when implied vol > 1.5x realised vol
-    # Minimum open interest per leg (contracts). None = check OFF until the user chooses a value.
-    min_leg_open_interest: float | None = None
-    allow_naked_short: bool = False  # never configurable via env: defined-risk only
+    max_strategy_exposure_pct: float = 10.0  # sum of open premium per strategy (approved 2026-10-01)
+    max_portfolio_exposure_pct: float = 20.0  # sum of all open premium (approved 2026-10-01)
+    correlated_bucket_cap_pct: float = 1.5  # combined open premium per correlated bucket (BTC+ETH)
+    min_relative_volume: float = 0.3  # underlying
+    min_leg_open_interest: float = 100.0  # contracts
+    min_leg_quote_size: float = 10.0  # contracts on the side we trade
+    max_leg_spread_pct: float = 10.0  # bid/ask as % of mid
+    expiry_guard_hours: float = 2.0  # forced exit this long before expiry
+    dte_multiple: float = 2.5  # DEFAULT: time to expiry >= 2.5x the expected hold
+    iv_percentile_max: float = 80.0  # DEFAULT: don't buy when ATM IV percentile > 80 (event strategies exempt)
+    breakeven_margin: float = 0.25  # DEFAULT
+    premium_stop_pct: float = 35.0
+    delta_min: float = 0.40  # DEFAULT
+    delta_max: float = 0.60  # DEFAULT
+    allow_sell_to_open: bool = False  # NOT configurable: buying only
+
+    @property
+    def max_risk_per_trade_pct(self) -> float:  # alias used by sizing
+        return self.max_premium_per_trade_pct
 
     @classmethod
     def from_env(cls, e: _Env) -> "RiskLimits":
         d = cls()
         return cls(
-            max_risk_per_trade_pct=e.float("MAX_RISK_PER_TRADE_PCT", d.max_risk_per_trade_pct),
+            max_premium_per_trade_pct=min(1.0, e.float("MAX_PREMIUM_PER_TRADE_PCT", d.max_premium_per_trade_pct)),
             max_daily_loss_pct=e.float("MAX_DAILY_LOSS_PCT", d.max_daily_loss_pct),
             max_drawdown_pct=e.float("MAX_DRAWDOWN_PCT", d.max_drawdown_pct),
             max_trades_per_day=e.int("MAX_TRADES_PER_DAY", d.max_trades_per_day),
+            max_concurrent_positions=e.int("MAX_CONCURRENT_POSITIONS", d.max_concurrent_positions),
             max_strategy_exposure_pct=e.float("MAX_STRATEGY_EXPOSURE_PCT", d.max_strategy_exposure_pct),
             max_portfolio_exposure_pct=e.float("MAX_PORTFOLIO_EXPOSURE_PCT", d.max_portfolio_exposure_pct),
-            max_concurrent_positions=e.int("MAX_CONCURRENT_POSITIONS", d.max_concurrent_positions),
+            correlated_bucket_cap_pct=e.float("CORRELATED_BUCKET_CAP_PCT", d.correlated_bucket_cap_pct),
             min_relative_volume=e.float("MIN_RELATIVE_VOLUME", d.min_relative_volume),
-            min_hours_to_expiry=e.float("MIN_HOURS_TO_EXPIRY", d.min_hours_to_expiry),
-            close_before_settlement_min=e.int("CLOSE_BEFORE_SETTLEMENT_MIN", d.close_before_settlement_min),
+            min_leg_open_interest=e.float("MIN_LEG_OPEN_INTEREST", d.min_leg_open_interest),
+            min_leg_quote_size=e.float("MIN_LEG_QUOTE_SIZE", d.min_leg_quote_size),
             max_leg_spread_pct=e.float("MAX_LEG_SPREAD_PCT", d.max_leg_spread_pct),
-            max_iv_to_rv_for_debit=e.float("MAX_IV_TO_RV_FOR_DEBIT", d.max_iv_to_rv_for_debit),
-            min_leg_open_interest=e.opt_float("MIN_LEG_OPEN_INTEREST"),
+            expiry_guard_hours=e.float("EXPIRY_GUARD_HOURS", d.expiry_guard_hours),
+            dte_multiple=e.float("DTE_MULTIPLE", d.dte_multiple),
+            iv_percentile_max=e.float("IV_PERCENTILE_MAX", d.iv_percentile_max),
+            breakeven_margin=e.float("BREAKEVEN_MARGIN", d.breakeven_margin),
+            premium_stop_pct=e.float("PREMIUM_STOP_PCT", d.premium_stop_pct),
+            delta_min=e.float("DELTA_MIN", d.delta_min),
+            delta_max=e.float("DELTA_MAX", d.delta_max),
         )
 
 

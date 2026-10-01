@@ -15,14 +15,14 @@ def test_defaults_are_safe() -> None:
 
 def test_user_approved_risk_defaults() -> None:
     r = Settings.from_env({}).risk
-    assert (r.max_risk_per_trade_pct, r.max_daily_loss_pct, r.max_drawdown_pct, r.max_concurrent_positions) == (
+    assert (r.max_premium_per_trade_pct, r.max_daily_loss_pct, r.max_drawdown_pct, r.max_concurrent_positions) == (
         0.5, 2.0, 8.0, 3)
-    assert (r.min_hours_to_expiry, r.close_before_settlement_min, r.max_leg_spread_pct, r.max_iv_to_rv_for_debit) == (
-        6.0, 30, 10.0, 1.5)
+    assert (r.expiry_guard_hours, r.max_leg_spread_pct, r.min_leg_open_interest, r.correlated_bucket_cap_pct) == (
+        2.0, 10.0, 100.0, 1.5)
 
 
-def test_naked_shorts_cannot_be_enabled_by_env() -> None:
-    assert Settings.from_env({"ALLOW_NAKED_SHORT": "true"}).risk.allow_naked_short is False
+def test_sell_to_open_cannot_be_enabled_by_env() -> None:
+    assert Settings.from_env({"ALLOW_SELL_TO_OPEN": "true"}).risk.allow_sell_to_open is False
 
 
 def test_unknown_values_fall_back_to_safe() -> None:
@@ -62,5 +62,5 @@ def test_base_url_override_and_lookback_clamp() -> None:
 
 
 def test_watchlist_default_and_override() -> None:
-    assert get_watchlist("") == DEFAULT_WATCHLIST == ("BTCUSD", "ETHUSD")
+    assert get_watchlist("") == DEFAULT_WATCHLIST == ("BTCUSD", "ETHUSD", "XAUTUSD")
     assert get_watchlist(" btcusd, ETHUSD ,btcusd") == ("BTCUSD", "ETHUSD")

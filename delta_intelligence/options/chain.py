@@ -16,8 +16,13 @@ OPTION_TYPES = "call_options,put_options"
 
 
 def expiry_from_symbol(symbol: str) -> pd.Timestamp:
-    d = symbol.split("-")[-1]
-    return pd.Timestamp(dt.datetime(2000 + int(d[4:6]), int(d[2:4]), int(d[0:2]), 12, tzinfo=dt.timezone.utc))
+    """Expiry from a C|P-ASSET-STRIKE-DDMMYY symbol. The settlement HOUR depends on the underlying (BTC/ETH 12:00 UTC,
+    XAUT 16:00 UTC, verified); prefer `settlement_time` from /v2/products when available."""
+    from delta_intelligence.config.watchlist import SETTLE_HOUR_BY_ASSET
+
+    asset, d = symbol.split("-")[1], symbol.split("-")[-1]
+    hour = SETTLE_HOUR_BY_ASSET.get(asset, 12)
+    return pd.Timestamp(dt.datetime(2000 + int(d[4:6]), int(d[2:4]), int(d[0:2]), hour, tzinfo=dt.timezone.utc))
 
 
 def _f(x) -> float | None:
@@ -47,6 +52,8 @@ class OptionQuote:
     product_id: int | None
     contract_value: float | None
     timestamp_us: int | None
+    volume: float | None = None  # 24h traded contracts
+    tick_size: float | None = None
 
     @property
     def mid(self) -> float | None:
@@ -65,7 +72,8 @@ def parse_ticker(t: dict) -> OptionQuote | None:
         expiry=expiry_from_symbol(sym), bid=_f(q.get("best_bid")), ask=_f(q.get("best_ask")),
         mark=_f(t.get("mark_price")), mark_iv=_f(q.get("mark_iv")), open_interest=_f(t.get("oi_contracts") or t.get("oi")),
         bid_size=_f(q.get("bid_size")), ask_size=_f(q.get("ask_size")), delta=_f(g.get("delta")), spot=_f(g.get("spot")),
-        product_id=t.get("product_id"), contract_value=_f(t.get("contract_value")), timestamp_us=t.get("timestamp"))
+        product_id=t.get("product_id"), contract_value=_f(t.get("contract_value")), timestamp_us=t.get("timestamp"),
+        volume=_f(t.get("volume")), tick_size=_f(t.get("tick_size")))
 
 
 class OptionChain:

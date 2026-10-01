@@ -330,6 +330,22 @@ VERIFIED (docs).
 
 ## 12. Options
 
+**Listed option underlyings** (VERIFIED live, 2026-10-02, production AND testnet): **BTC, ETH, XAUT** only.
+**There are no SOL options** on Delta Exchange India.
+
+| Underlying | Perp | Spot index | contract_value | tick (prod / testnet) | Settlement time | Expiries listed |
+|---|---|---|---|---|---|---|
+| BTC | BTCUSD | .DEXBTUSD | 0.001 BTC | 0.1 / **0.5** | 12:00 UTC = 17:30 IST | daily ×3, weekly, monthly, quarterly |
+| ETH | ETHUSD | .DEETHUSD | **0.01 ETH** | 0.01 / 0.01 | 12:00 UTC = 17:30 IST | daily ×3, weekly, monthly, quarterly |
+| XAUT | XAUTUSD | .DEXAUTUSD | 0.001 XAUT | 0.01 / 0.01 | **16:00 UTC = 21:30 IST** | daily only (2 listed) |
+
+- Premium is quoted in **USD per 1 unit of the underlying**; positions are cash-settled in USD.
+- The symbol date (DDMMYY) does not encode the time. The settlement hour differs by underlying (XAUT 16:00 UTC), so
+  take `settlement_time` from /v2/products and use the per-underlying hour only as a fallback.
+- /v2/products returns at most 500 rows per page; option listings exceed that, so **always paginate**.
+- Some older XAUT symbols have a different format (e.g. `C-XAUT-W-220726`); parsers must skip unknown formats.
+
+
 VERIFIED (live), 2026-10-02.
 
 **Products**

@@ -102,6 +102,15 @@ def main() -> int:
                 rows.append(row)
                 if row["default"]:
                     default_trades[strat.name] = res.trades
+            # Frictionless best case (zero spread, zero fees): separates "no edge" from "costs kill the edge".
+            spread, tick = market.spread, market.tick
+            market.spread, market.tick = (0.0, 0.0), 1e-9
+            fr = run_option_backtest(strat, frame, market, OptionBacktestConfig(
+                policy="LONG_OPTION", commission_rate=0.0, premium_cap_rate=0.0, gst_rate=0.0), setups=setups)
+            market.spread, market.tick = spread, tick
+            for r_ in rows:
+                if r_["strategy"] == strat.name:
+                    r_["frictionless_long_option_net_r"] = summarize_trades(fr.trades).get("net_expected_r")
             print(f"  {strat.name:32} setups {len(setups):5}  default-structure trades "
                   f"{len(default_trades.get(strat.name, [])):5}  ({time.time() - t0:.0f}s)", flush=True)
         print(f"{perp}: evaluating the ranker ...", flush=True)
@@ -152,14 +161,17 @@ def render(asset, frame, rows, ev, val) -> list[str]:
         md.append(f"| {r['strategy']} | {r['structure']} | {r['n_trades']} | {r['n_days']} | {r['win_rate']:.0%} | "
                   f"{fmt(r['net_expected_r'])} | {fmt(r['is_net_r'])} | {fmt(r['oos_net_r'])} ({r['oos_n']}) | {folds} | "
                   f"{fmt(r['underlying_expected_r'])} | {r['avg_fees_share_of_risk']:.1%} | {fmt(r['max_drawdown_r'], 1)} |")
-    md += ["", "### All structures (net R per trade)", "", "| Strategy | LONG_OPTION | DEBIT_SPREAD | CREDIT_SPREAD |",
-           "|---|---|---|---|"]
+    md += ["", "### All structures (net R per trade), plus a frictionless check", "",
+           "The frictionless column is a long option with ZERO spread and ZERO fees. It is not achievable; it shows whether "
+           "any edge exists before costs.", "",
+           "| Strategy | LONG_OPTION | DEBIT_SPREAD | CREDIT_SPREAD | Frictionless long option |", "|---|---|---|---|---|"]
     by = {}
     for r in rows:
         by.setdefault(r["strategy"], {})[r["structure"]] = r
     for name, d in by.items():
         cells = [f"{fmt(d[p].get('net_expected_r'))} ({d[p].get('n_trades', 0)})" if p in d else "-" for p in STRUCTURES]
-        md.append(f"| {name} | " + " | ".join(cells) + " |")
+        fr = next(iter(d.values())).get("frictionless_long_option_net_r")
+        md.append(f"| {name} | " + " | ".join(cells) + f" | {fmt(fr)} |")
     skipped = {}
     for r in rows:
         if r["default"]:
@@ -187,6 +199,10 @@ def render(asset, frame, rows, ev, val) -> list[str]:
         md.append(f"- Taking every signal: {fmt(ev['take_every_signal_mean_net_r'])} net R per trade"
                   + (f"; trades NO TRADE avoided averaged {fmt(ev['avoided_by_no_trade_mean_net_r'])}"
                      if "avoided_by_no_trade_mean_net_r" in ev else ""))
+        if ev["no_trade_points"] == ev["decision_points"]:
+            md.append("- The ranker returned NO TRADE at every decision point, because no strategy's shrunk, net-of-cost "
+                      "edge cleared the minimum. That is the intended behaviour when nothing works. It also means the "
+                      "ranker's lift over random cannot be measured on this library.")
     else:
         md.append("No decision points.")
     return md + [""]

@@ -162,7 +162,6 @@ class VWAPMeanReversion(Strategy):
     description = "Fade a stretch away from the exchange-day VWAP when the trend is weak, on a reversal bar; target VWAP."
     family = "reversion"
     uses_volume = True
-    default_structure = "DEBIT_SPREAD"
     required_features = ("vwap", "vwap_distance_pct", "trend_slope", "atr_14")
     default_parameters = {"stretch_threshold_pct": 0.35, "max_trend_slope": 0.0006, "stop_atr_mult": 1.0,
                           "cooldown_bars": 8}
@@ -181,7 +180,6 @@ class RSI2MeanReversion(Strategy):
     name = "RSI(2) Mean Reversion"
     description = "Connors RSI(2): buy oversold dips above EMA(200), sell overbought rallies below it."
     family = "reversion"
-    default_structure = "DEBIT_SPREAD"
     required_features = ("rsi_2", "ema_200", "atr_14")
     default_parameters = {"oversold": 10.0, "overbought": 90.0, "stop_atr_mult": 1.5, "target_atr_mult": 1.5,
                           "cooldown_bars": 5}
@@ -197,7 +195,6 @@ class BollingerReversion(Strategy):
     name = "Bollinger Band Mean Reversion"
     description = "A close back inside the 20-bar Bollinger band after closing outside it, in weak trends; target midline."
     family = "reversion"
-    default_structure = "DEBIT_SPREAD"
     required_features = ("bb_upper_20", "bb_lower_20", "bb_mid_20", "trend_slope", "atr_14")
     default_parameters = {"max_trend_slope": 0.0006, "stop_atr_mult": 1.0, "cooldown_bars": 8}
 
@@ -214,7 +211,6 @@ class CamarillaReversal(Strategy):
     name = "Camarilla Pivot Reversal"
     description = "Fade a touch of the previous day's Camarilla R3/S3 on a reversal bar, back toward the pivot."
     family = "reversion"
-    default_structure = "DEBIT_SPREAD"
     required_features = ("camarilla_r3", "camarilla_s3", "cpr_pivot", "atr_14", "minutes_into_day")
     default_parameters = {"stop_atr_mult": 0.75, "min_minutes_into_day": 15, "cooldown_bars": 10}
 
@@ -237,7 +233,6 @@ class FundingExtremeContrarian(Strategy):
                    "overbought, go SHORT (and the mirror for very negative funding). Funding units are UNVERIFIED, but "
                    "a z-score does not depend on them.")
     family = "derivatives"
-    default_structure = "DEBIT_SPREAD"
     required_features = ("funding_z_7d", "rsi_2", "atr_14")
     default_parameters = {"funding_z": 2.0, "stop_atr_mult": 1.5, "target_atr_mult": 2.0, "cooldown_bars": 24}
 

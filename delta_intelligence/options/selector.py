@@ -1,39 +1,47 @@
 """
-Contract selection: turn a directional view on the underlying into concrete, defined-risk option legs.
+Contract selection for a BUYING-ONLY system. Shared by the backtester and the live engine.
 
-Shared by the backtester and the live engine, so both pick contracts the same way.
+**Direction → contract**
+- LONG view → buy a call; SHORT view → buy a put.
+- Strike: ATM by default (or 1 strike ITM if `moneyness="ITM1"`), accepted only if |delta| is within
+  [delta_min, delta_max] (default 0.40-0.60). If neither ATM nor 1-ITM qualifies → no trade.
+- Volatility view (event strategy) → long straddle (ATM call + put) or long strangle (1 strike OTM each side).
 
-- **Expiry:** the nearest daily expiry (12:00 UTC = 17:30 IST) with at least `min_hours_to_expiry` remaining;
-  otherwise the next day's (user rule, 2026-10-02: 6 h).
-- **Strikes:** always from the expiry's ACTUAL listed strikes (BTC steps are typically 200, ETH 20).
-
-| Policy | LONG view | SHORT view |
-|---|---|---|
-| LONG_OPTION | buy the call nearest the spot | buy the put nearest the spot |
-| DEBIT_SPREAD | buy the ATM call, sell the call nearest the target (>= 1 strike above) | mirror with puts |
-| CREDIT_SPREAD | sell the put nearest the spot at/below it, buy the put nearest the stop (>= 1 strike below) | sell the call at/above the spot, buy the call nearest the stop |
+**Expiry:** the NEAREST listed expiry whose time to expiry is at least `dte_multiple` × the expected hold (default
+2.5×), AND which leaves the whole expected hold before the expiry guard (default: exit 2 h before expiry). Expiry
+times are 12:00 UTC (17:30 IST) for BTC/ETH and 16:00 UTC (21:30 IST) for XAUT; always shown in IST.
 """
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
-from delta_intelligence.options.structures import Leg, Structure
+from delta_intelligence.options.structures import Structure, long_call, long_put, long_straddle, long_strangle
 
-SETTLE_HOUR_UTC = 12
+POLICIES = ("LONG_OPTION", "LONG_STRADDLE", "LONG_STRANGLE")
 
 
-def choose_expiry(at: pd.Timestamp, min_hours: float, listed: set[pd.Timestamp] | None = None,
-                  max_days_ahead: int = 3) -> pd.Timestamp | None:
-    """First 12:00 UTC expiry at least `min_hours` after `at` (and listed, if a listing is supplied)."""
-    at = pd.Timestamp(at)
-    day = at.normalize()
-    for k in range(max_days_ahead + 1):
-        exp = day + pd.Timedelta(days=k, hours=SETTLE_HOUR_UTC)
-        if (exp - at) >= pd.Timedelta(hours=min_hours) and (listed is None or exp in listed):
-            return exp
+@dataclass(frozen=True)
+class SelectorConfig:
+    moneyness: str = "ATM"  # ATM / ITM1
+    delta_min: float = 0.40
+    delta_max: float = 0.60
+    dte_multiple: float = 2.5
+    expiry_guard_hours: float = 2.0
+    strangle_steps: int = 1
+
+
+def choose_expiry(now: pd.Timestamp, expected_hold_hours: float, expiries, cfg: SelectorConfig) -> pd.Timestamp | None:
+    """Nearest expiry with TTE >= dte_multiple × hold and TTE − guard >= hold."""
+    now = pd.Timestamp(now)
+    for e in sorted(pd.Timestamp(x) for x in expiries):
+        tte_h = (e - now).total_seconds() / 3600.0
+        if tte_h >= cfg.dte_multiple * expected_hold_hours and tte_h - cfg.expiry_guard_hours >= expected_hold_hours:
+            return e
     return None
 
 
@@ -41,55 +49,51 @@ def nearest(strikes: np.ndarray, x: float) -> float:
     return float(strikes[np.argmin(np.abs(strikes - x))])
 
 
-def _step_away(strikes: np.ndarray, base: float, x: float, up: bool) -> float:
-    """Strike nearest x, but at least one listed strike above (up) / below (down) `base`."""
-    side = strikes[strikes > base] if up else strikes[strikes < base]
-    if not len(side):
-        raise ValueError("no listed strike beyond the base strike")
-    return nearest(side, x)
-
-
-def build_structure(policy: str, direction: str, underlying: str, spot: float, expiry: pd.Timestamp,
-                    strikes: np.ndarray, stop: float, target: float, contracts: int, contract_value: float,
-                    symbol_for=None) -> Structure:
-    """Legs for `policy`. `stop`/`target` are in INDEX terms (the options' underlying). Raises ValueError when the
-    listed strikes can't express the structure."""
+def pick_strike(kind: str, spot: float, strikes: np.ndarray, abs_delta: Callable[[float], float | None],
+                cfg: SelectorConfig) -> float | None:
+    """ATM or 1-ITM strike whose |delta| is inside the configured band; None when neither qualifies."""
     strikes = np.sort(np.asarray(strikes, dtype="float64"))
     if not len(strikes):
-        raise ValueError("no listed strikes")
+        return None
+    atm = nearest(strikes, spot)
+    i = int(np.searchsorted(strikes, atm))
+    itm = (strikes[i - 1] if i > 0 else None) if kind == "C" else (strikes[i + 1] if i + 1 < len(strikes) else None)
+    order = [itm, atm] if cfg.moneyness == "ITM1" else [atm, itm]
+    for k in order:
+        if k is None:
+            continue
+        d = abs_delta(float(k))
+        if d is not None and cfg.delta_min <= d <= cfg.delta_max:
+            return float(k)
+    return None
+
+
+def build_long(policy: str, direction: str, underlying: str, spot: float, expiry: pd.Timestamp, strikes: np.ndarray,
+               contracts: int, contract_value: float, abs_delta: Callable[[str, float], float | None],
+               cfg: SelectorConfig, symbol_for: Callable[[str, float, pd.Timestamp], str] | None = None) -> Structure:
+    """Raises ValueError when no listed strike satisfies the rules (→ no trade)."""
+    strikes = np.sort(np.asarray(strikes, dtype="float64"))
     exp = expiry.to_pydatetime()
-    long_view = direction == "LONG"
-
-    def leg(kind, k, side):
-        sym = symbol_for(kind, k, expiry) if symbol_for else ""
-        return Leg(kind, k, exp, side, contracts, sym)
-
+    sym = (lambda k, x: symbol_for(k, x, expiry)) if symbol_for else (lambda k, x: "")
     if policy == "LONG_OPTION":
+        kind = "C" if direction == "LONG" else "P"
+        k = pick_strike(kind, spot, strikes, lambda x: abs_delta(kind, x), cfg)
+        if k is None:
+            raise ValueError(f"no ATM/1-ITM {kind} strike with |delta| in [{cfg.delta_min}, {cfg.delta_max}]")
+        builder = long_call if kind == "C" else long_put
+        return builder(underlying, k, exp, contracts, contract_value, sym(kind, k))
+    if policy == "LONG_STRADDLE":
         k = nearest(strikes, spot)
-        legs = [leg("C" if long_view else "P", k, 1)]
-        name = "LONG_CALL" if long_view else "LONG_PUT"
-    elif policy == "DEBIT_SPREAD":
-        k_long = nearest(strikes, spot)
-        k_short = _step_away(strikes, k_long, target, up=long_view)
-        kind = "C" if long_view else "P"
-        legs = [leg(kind, k_long, 1), leg(kind, k_short, -1)]
-        name = "BULL_CALL_DEBIT" if long_view else "BEAR_PUT_DEBIT"
-    elif policy == "CREDIT_SPREAD":
-        if long_view:
-            below = strikes[strikes <= spot]
-            k_short = float(below.max()) if len(below) else nearest(strikes, spot)
-            k_long = _step_away(strikes, k_short, stop, up=False)
-            legs = [leg("P", k_long, 1), leg("P", k_short, -1)]
-            name = "BULL_PUT_CREDIT"
-        else:
-            above = strikes[strikes >= spot]
-            k_short = float(above.min()) if len(above) else nearest(strikes, spot)
-            k_long = _step_away(strikes, k_short, stop, up=True)
-            legs = [leg("C", k_long, 1), leg("C", k_short, -1)]
-            name = "BEAR_CALL_CREDIT"
-    else:
-        raise ValueError(f"unknown structure policy {policy!r}")
-    return Structure(name, underlying, legs, contract_value, "LONG" if long_view else "SHORT")
+        return long_straddle(underlying, k, exp, contracts, contract_value, (sym("C", k), sym("P", k)))
+    if policy == "LONG_STRANGLE":
+        atm = nearest(strikes, spot)
+        i = int(np.searchsorted(strikes, atm))
+        s = cfg.strangle_steps
+        if i - s < 0 or i + s >= len(strikes):
+            raise ValueError("not enough listed strikes for a strangle")
+        kp, kc = float(strikes[i - s]), float(strikes[i + s])
+        return long_strangle(underlying, kp, kc, exp, contracts, contract_value, (sym("C", kc), sym("P", kp)))
+    raise ValueError(f"unknown policy {policy!r} (buying-only policies: {POLICIES})")
 
 
 def option_symbol(kind: str, asset: str, strike: float, expiry: pd.Timestamp | dt.datetime) -> str:

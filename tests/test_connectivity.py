@@ -7,7 +7,7 @@ from delta_intelligence.brokers.rate_limit import RateLimiter
 from delta_intelligence.config.settings import DeltaLimits, Settings
 
 BASE = "https://cdn-ind.testnet.deltaex.org"
-PRODUCTS = [{"symbol": s, "id": i} for s, i in (("BTCUSD", 84), ("ETHUSD", 1699), ("SOLUSD", 92572), ("XRPUSD", 93723))]
+PRODUCTS = [{"symbol": s, "id": i} for s, i in (("BTCUSD", 84), ("ETHUSD", 1699), ("XAUTUSD", 131253))]
 
 
 def client(fake_clock, settings: Settings) -> DeltaClient:
