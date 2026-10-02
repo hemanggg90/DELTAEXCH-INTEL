@@ -63,7 +63,8 @@ edge right now, and is there a valid setup? If not, do nothing.* **NO TRADE is a
 - Use `pytest` with mocked HTTP (`responses`). **Tests never use the network**, use temporary databases, and never touch
   real data. Target 150+ tests.
 - Streamlit-only architecture:
-  - `app.py` at the root, with a password gate and then `st.navigation`.
+  - `app.py` at the root, with an OPTIONAL password gate (no password = open in PAPER, read-only in LIVE) and then
+    `st.navigation`.
   - One `TradingEngine` via `@st.cache_resource`, running daemon threads. Threads never call `st.*`.
   - The UI reads thread-safe shared caches through `st.fragment(run_every=...)`.
   - `st.session_state` holds UI state only. Trading state lives in the DB.

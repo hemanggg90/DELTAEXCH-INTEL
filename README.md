@@ -123,7 +123,8 @@ python scripts/testnet_roundtrip.py  # testnet plumbing test (dry run by default
 ```
 
 **Settings** go in a `.env` file in this folder (it is git-ignored). Copy `.env.example` and fill in:
-`DELTA_ENV`, `DELTA_API_KEY`, `DELTA_API_SECRET`, `APP_PASSWORD`. Never share or paste the key values.
+`DELTA_ENV`, and for live testing `DELTA_API_KEY` and `DELTA_API_SECRET`. `APP_PASSWORD` is optional: with none, paper
+trading is open (no login); LIVE mode refuses to run open and needs a password. Never share or paste the key values.
 
 Notes:
 - The PC must not go to sleep while the engine runs.

@@ -41,3 +41,22 @@ def test_every_page_renders_offline() -> None:
     bad = [(n, m) for n, ok, m, _ in results if not ok]
     assert not bad, bad
     assert len(results) == 14
+
+
+@pytest.mark.parametrize("password,mode,authed,expected", [
+    ("", "PAPER", False, True),    # no password, paper: open
+    ("", "LIVE", False, False),    # no password, live: read-only, never open
+    ("pw", "PAPER", False, False),  # password set, not logged in
+    ("pw", "PAPER", True, True),
+    ("pw", "LIVE", True, True),
+])
+def test_controls_follow_password_and_mode(monkeypatch, password, mode, authed, expected) -> None:
+    import streamlit as st
+
+    from delta_intelligence.config.settings import Settings
+    from delta_intelligence.ui import components
+
+    s = Settings.from_env({"APP_PASSWORD": password, "TRADING_MODE": mode})
+    monkeypatch.setattr(components, "get_settings", lambda: s)
+    monkeypatch.setattr(st, "session_state", {"_authed": authed})
+    assert components.can_control() is expected

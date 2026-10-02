@@ -3,8 +3,9 @@ delta-intelligence dashboard: the single Streamlit entry point.
 
     streamlit run app.py
 
-A password gate (APP_PASSWORD from .env / Streamlit secrets) sits in front of every page. Without a password the app
-is read-only. Pages live in app_pages/ (not pages/), so Streamlit's legacy auto-discovery can't bypass the gate.
+An OPTIONAL password gate (APP_PASSWORD from .env / Streamlit secrets) sits in front of every page when set. With no
+password, PAPER mode is open with full controls; LIVE mode without a password is read-only. Pages live in app_pages/
+(not pages/), so Streamlit's legacy auto-discovery can't bypass the gate.
 """
 from __future__ import annotations
 

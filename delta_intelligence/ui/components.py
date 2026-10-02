@@ -79,17 +79,27 @@ def authenticated() -> bool:
     return bool(st.session_state.get("_authed"))
 
 
+def open_access() -> bool:
+    """No password configured AND not in LIVE mode: the dashboard runs with full controls and no login. This is for
+    PAPER trading only. LIVE mode never runs open: it needs APP_PASSWORD."""
+    return not password_configured() and not get_settings().is_live_mode
+
+
 def can_control() -> bool:
-    """Controls (kill switch, engine start/stop, orders, exits) need a configured password AND a successful login."""
-    return password_configured() and authenticated()
+    """Controls (kill switch, engine start/stop, orders, exits). With a password: a successful login. Without one:
+    allowed in PAPER mode only (`open_access`), never in LIVE mode."""
+    if password_configured():
+        return authenticated()
+    return open_access()
 
 
 def gate() -> bool:
-    """Password gate in front of every page. Returns True when the app may render. Without APP_PASSWORD the app is
-    READ-ONLY: pages render, controls are disabled."""
+    """Optional password gate. With APP_PASSWORD set, every page needs a login. Without it, PAPER mode is open (full
+    controls); LIVE mode without a password renders READ-ONLY."""
     if not password_configured():
-        st.sidebar.warning("No APP_PASSWORD set: the dashboard is READ-ONLY (no kill switch, engine control or "
-                           "orders). Set APP_PASSWORD in .env or Streamlit secrets.")
+        if get_settings().is_live_mode:
+            st.sidebar.warning("LIVE mode needs APP_PASSWORD: with none set the dashboard is READ-ONLY (no engine "
+                               "control, kill switch or orders).")
         return True
     if authenticated():
         if st.sidebar.button("Log out"):
@@ -110,4 +120,4 @@ def gate() -> bool:
 def control_note() -> None:
     if not can_control():
         st.info("Controls are disabled: " + ("log in to use them." if password_configured()
-                                             else "set APP_PASSWORD to enable them."))
+                                             else "LIVE mode needs APP_PASSWORD (PAPER mode does not)."))
