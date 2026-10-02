@@ -22,21 +22,26 @@ class AccountTracker:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def _state(self) -> dict:
-        return db.get_state(KEY, {}) or {}
+    @staticmethod
+    def _key(mode: str) -> str:
+        """PAPER keeps the original key; LIVE has its own, so a paper peak never shows up as a live drawdown."""
+        return KEY if mode == "PAPER" else f"{KEY}:{mode.lower()}"
 
-    def update(self, snapshot: dict, now: dt.datetime) -> dict:
+    def _state(self, mode: str = "PAPER") -> dict:
+        return db.get_state(self._key(mode), {}) or {}
+
+    def update(self, snapshot: dict, now: dt.datetime, mode: str = "PAPER") -> dict:
         """Roll the risk day if needed, update the peak, persist. Returns the state."""
         c = self.settings.clocks
         today = str(risk_day(now, c.risk_day_tz, c.risk_day_start))
-        st = self._state()
+        st = self._state(mode)
         eq = float(snapshot["equity"])
         if st.get("risk_day") != today:
             st["risk_day"] = today
             st["day_start_equity"] = eq
         st["peak_equity"] = max(float(st.get("peak_equity", eq)), eq)
         st["equity"] = eq
-        db.set_state(KEY, st)
+        db.set_state(self._key(mode), st)
         return st
 
     def trades_today(self, now: dt.datetime, mode: str = "PAPER") -> int:
@@ -46,11 +51,11 @@ class AccountTracker:
             return s.query(Position).filter(Position.mode == mode, Position.opened_at >= start).count()
 
     def account_state(self, snapshot: dict, now: dt.datetime, broker_connected: bool = True,
-                      kill_switch: bool = False) -> AccountState:
-        st = self.update(snapshot, now)
+                      kill_switch: bool = False, mode: str = "PAPER") -> AccountState:
+        st = self.update(snapshot, now, mode)
         return AccountState(
             equity=snapshot["equity"], peak_equity=st["peak_equity"],
-            daily_pnl=snapshot["equity"] - st["day_start_equity"], trades_today=self.trades_today(now),
+            daily_pnl=snapshot["equity"] - st["day_start_equity"], trades_today=self.trades_today(now, mode),
             open_positions=snapshot["open_positions"], available_cash=snapshot["available_cash"],
             exposure_by_strategy=snapshot["exposure_by_strategy"], exposure_by_bucket=snapshot["exposure_by_bucket"],
             total_exposure=snapshot["total_exposure"], broker_connected=broker_connected, kill_switch=kill_switch)

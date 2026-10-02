@@ -319,3 +319,23 @@ def test_second_engine_refuses_to_start_while_another_is_alive(env) -> None:
     db.set_state("engine_heartbeat", (NOW - dt.timedelta(minutes=10)).isoformat())  # stale owner: allowed
     eng.start()
     eng.stop()
+
+
+def test_recovery_skips_candle_fetch_when_nothing_could_have_been_missed(env) -> None:
+    """Found on testnet: a position opened <5 min before a restart made recover() ask Delta for an empty window and
+    report DataUnavailableError. No stop, or no closed bar yet, means there is nothing to check."""
+    s, box, broker = env
+
+    class NoCandles:
+        def get_ohlcv(self, *a, **k):
+            raise AssertionError("must not fetch candles here")
+
+    r_nostop = open_call(broker, stop=None, target=None)
+    summary = recover(broker, NoCandles(), NOW + dt.timedelta(hours=1))
+    assert summary["errors"] == [] and summary["closed"] == []
+    with db.get_session() as ss:
+        ss.query(Position).filter_by(position_id=r_nostop.position_id).update({"status": "CLOSED"})
+    open_call(broker)  # has a stop, but the restart is 1 minute after it was opened
+    db.set_state("engine_heartbeat", (NOW - dt.timedelta(minutes=1)).isoformat())
+    summary = recover(broker, NoCandles(), NOW)
+    assert summary["errors"] == [] and summary["closed"] == []

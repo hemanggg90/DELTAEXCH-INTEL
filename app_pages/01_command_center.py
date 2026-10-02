@@ -26,8 +26,10 @@ def account_tiles() -> None:
     snap = state.broker().account_snapshot()
     start = s.paper_starting_capital_usd
     c = st.columns(4)
-    c[0].metric("Paper equity", money(snap["equity"], rate))
-    c[1].metric("P&L since start", pnl(snap["equity"] - start))
+    live = state.live_mode() and state.get_engine() is not None
+    c[0].metric("LIVE equity" if live else "Paper equity", money(snap["equity"], rate))
+    c[1].metric("Equity vs start" if not live else "Cash available",
+                pnl(snap["equity"] - start) if not live else money(snap["available_cash"], rate))
     c[2].metric("Open positions", f"{snap['open_positions']}")
     c[3].metric("Premium at risk", money(snap["total_exposure"], rate))
 

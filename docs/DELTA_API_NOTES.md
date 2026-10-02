@@ -426,3 +426,104 @@ VERIFIED (live), 2026-10-02.
 6. Use `ticker.timestamp`, not `ticker.time`.
 7. Funding interval 8 h, at 00:00, 08:00 and 16:00 UTC. Prefer `nfr` from the WebSocket feed.
 8. Live trading needs a static, whitelisted IP. Streamlit Community Cloud is paper-only.
+
+## 14. P7 live execution: what the code assumes (checked on testnet 2026-10-02, results in 14.1)
+
+`brokers/delta_broker.py` reads the `POST /v2/orders` response defensively. Confirm each item on testnet, then change
+the word UNVERIFIED to VERIFIED with the date.
+
+| Assumption | Used for | If wrong |
+|---|---|---|
+| Response `result` has `id`, `size`, `unfilled_size`, `state` | fill size (`size - unfilled_size`) | an IOC order with no `unfilled_size` is treated as filled only when `state == "closed"` |
+| `average_fill_price` is present on filled orders | entry/exit price | the limit price is used and the order note says so (conservative for buys, pessimistic for sells only if the fill was better) |
+| `paid_commission` is the fee in USD incl. GST | fees and max loss | the fallback fee model is used and noted |
+| IOC limit orders are accepted for options, and `reduce_only` is accepted on a sell-to-close | all orders | rejections are recorded as REJECTED; nothing is retried |
+| `GET /v2/positions/margined` rows carry `product_symbol` (or `product.symbol`) and a signed `size` | reconcile, settlement | reconcile reports an ORPHAN for every row and engages the kill switch |
+| USD/USDT wallet `balance` excludes the value of open options | equity = balance + open value | equity is double-counted; check on the first filled order |
+| `GET /v2/orders/client_order_id/{id}` returns the order object (or 404) | timeout resolution | an unresolved order stays UNKNOWN and the kill switch is engaged |
+| Options accept no exchange-side brackets | exits are engine-managed | none: brackets are not used |
+
+**Testnet checklist (run in this order, read-only first):**
+1. `python scripts/check_delta.py` with testnet keys: time sync, auth, IP whitelist.
+2. Set `TRADING_MODE=LIVE`, `TRADING_LIVE_CONFIRM=YES_I_UNDERSTAND_THE_RISK`, `DELTA_ENV=TESTNET`; open Live Trading
+   and run the startup gate. Reconcile must report "exchange and database agree".
+3. Let one trade open and close. Compare the order response, `Fill` row, wallet change and fee with the exchange UI,
+   and record the findings in this section.
+4. Kill the process with a position open, restart, and confirm reconcile adopts nothing silently.
+5. Only then consider `DELTA_ENV=PRODUCTION`.
+
+### 14.1 Testnet round-trip results (VERIFIED live on India TESTNET, 2026-10-02)
+
+One IOC limit buy and one reduce-only IOC sell of 1 contract of `P-BTC-83200-041026` (product 202708, tick 0.5,
+contract value 0.001) through `DeltaBroker`, via `scripts/testnet_roundtrip.py`.
+
+| Assumption in §14 | Result |
+|---|---|
+| Order response has `id`, `size`, `unfilled_size`, `state` | **VERIFIED.** `state: "closed"`, `unfilled_size: 0` on a full IOC fill. Also `product_symbol`, `client_order_id`, `time_in_force`, `reduce_only`. |
+| `average_fill_price` present | **VERIFIED**, as a **string** (`"50"`). Buy filled at the ask; sell filled at the bid (limit was one tick worse each way). |
+| `paid_commission` is the USD fee incl. GST | **VERIFIED**: strings `"0.0059"` (buy) and `"0.00472"` (sell). The wallet moved by exactly premium + `paid_commission`, so it is the total taken. |
+| IOC limit and reduce-only accepted on options | **VERIFIED.** Prices sent as strings, `limit_price` echoed as `"50.5"` / `"39.5"`. |
+| Positions row has `product_symbol` and `size` | **VERIFIED**: top-level `product_symbol`, `size` (1 for a long), also `entry_price`, `mark_price`, `unrealized_pnl`, `commission`, nested `product`. A SHORT's sign is still UNVERIFIED (no short was opened). |
+| Wallet `balance` excludes open option value | **VERIFIED.** Buying 1 contract cut `balance` 200 -> 199.9441 (premium 0.05 + fee 0.0059). So equity = balance + open value is right. Wallet rows are `asset_symbol: "USD"` with string `balance`, `available_balance`. |
+| `GET /v2/orders/client_order_id/{id}` returns the order | **VERIFIED** (bare order object, same fields as the POST result). The 404 case is still UNVERIFIED. |
+| Reconcile against positions | **VERIFIED.** `ok` while holding (`{"P-BTC-83200-041026": 1.0}`) and after exit (`{}`). |
+| Database P&L equals the exchange | **VERIFIED.** Database realised P&L -0.02062 equals the wallet change 200 -> 199.97938 to the cent. |
+
+**Finding: testnet charges higher fees than production (CORRECTED 2026-10-02, see 14.3).** Both fills paid exactly
+**11.8% of the premium**, which is the testnet product's own cap (`premium_commission_rate = 0.1`, i.e. 10%) plus 18% GST.
+The testnet products report `taker/maker_commission_rate = 0.0003`; the PRODUCTION products report 0.0001 with a 3.5% cap
+(public `/v2/products`, checked the same day). The cost model's defaults (0.0001, 3.5%) are the PRODUCTION schedule and
+stay as they are. An earlier version of this note called them 3x too low; that was a testnet-vs-production mix-up.
+
+Wallet fact: after a buy, `blocked_margin` and the position's `commission` hold an estimate of the exit fee (0.00658) until
+the position is closed.
+
+### 14.2 Crash / restart test (VERIFIED live on India TESTNET, 2026-10-02)
+
+`scripts/testnet_roundtrip.py --yes --crash`, then `--orphan-check`, then `--yes --recover`.
+
+- **Crash:** the process bought 1 contract of `P-BTC-83400-031026` and was killed with `os._exit(3)` (no cleanup, no close).
+  The position stayed open on the exchange and as OPEN in the database.
+- **Orphan check (fresh EMPTY database, exchange still holding the position):** `reconcile()` returned `ok: false` with
+  `ORPHAN long on the exchange: P-BTC-83400-031026 size 1.0 (not in the database)` and engaged the kill switch. It
+  adopted nothing and sent no order.
+- **Restart (original database, new process):** `recover()` ran `reconcile()`: `ok: true`, no critical items, kill switch off.
+  The position was then closed with a reduce-only sell, the exchange showed no positions, and reconcile was clean again.
+- **Bug found and fixed:** `recover()` asked Delta for 5-minute candles over a window with no closed bar (a position opened
+  under 5 minutes before the restart) and logged `DataUnavailableError`. It now skips the check when the position has no
+  underlying stop or the window is shorter than 5 minutes. Nothing that could have been missed is skipped: the engine's
+  first cycle compares the live perp price with the stop.
+- Still UNVERIFIED: a crash between sending an order and saving the result (covered only by the offline UNKNOWN-order
+  tests), and the sign of a SHORT position row.
+
+### 14.3 Fee probe on a pricier option (VERIFIED live on India TESTNET, 2026-10-02)
+
+`--yes --min-cost 2`: 1 contract of `P-BTC-86000-161026`, buy at 2030, sell at 1980 (spread 3%).
+
+| Fill | Premium | `paid_commission` | Fee / premium |
+|---|---|---|---|
+| buy (cheap option, earlier) | 0.05 | 0.0059 | 11.8% |
+| sell (cheap option, earlier) | 0.04 | 0.00472 | 11.8% |
+| buy | 2.03 | 0.02752395 | 1.36% |
+| sell | 1.98 | 0.02752166 | 1.39% |
+
+- The wallet matched again: realised P&L -0.105046 (spread + fees), exchange flat afterwards, reconcile clean.
+- **Two regimes, as suspected.** Cheap options pay a flat 11.8% of premium (the cap binds: 10% of premium + 18% GST).
+  Pricier options pay a notional-based fee of about 0.0275 per BTC-0.001 contract at spot ~86k (about 0.032% of
+  notional incl. GST, VERIFIED to be nearly equal on buy and sell). The exact notional formula is UNVERIFIED; the product
+  reports a rate of 0.0003.
+- **Fee schedules differ by environment (VERIFIED from public `/v2/products`, 2026-10-02):**
+
+  | Environment | maker/taker rate | `premium_commission_rate` (cap) |
+  |---|---|---|
+  | PRODUCTION | 0.0001 | 0.035 (3.5%) |
+  | TESTNET | 0.0003 | 0.1 (10%) |
+
+  The formula is `min(rate x notional, cap x premium) x (1 + GST)`, using each product's own fields. Observed testnet
+  fees match it: the cheap option sits on the 10% cap (11.8% with GST); the pricier one is within ~10% of
+  `0.0003 x notional x 1.18` (the exact notional used is UNVERIFIED).
+- **Decision:** the cost model's defaults (0.0001, 3.5%) are the PRODUCTION schedule and are KEPT, so back-tests and the
+  planner are not made stricter than production. On testnet the planner's fee estimate is lower than the real fee (live
+  books the real `paid_commission`, so P&L and max loss are right). To mirror testnet in a test run, set
+  `FALLBACK_TAKER_RATE=0.0003`, `FALLBACK_MAKER_RATE=0.0003` and `FALLBACK_PREMIUM_CAP_RATE=0.1`.
+- Production fees themselves are UNVERIFIED by a real fill: they come from the public product fields, not a trade.

@@ -64,3 +64,12 @@ def test_base_url_override_and_lookback_clamp() -> None:
 def test_watchlist_default_and_override() -> None:
     assert get_watchlist("") == DEFAULT_WATCHLIST == ("BTCUSD", "ETHUSD", "XAUTUSD")
     assert get_watchlist(" btcusd, ETHUSD ,btcusd") == ("BTCUSD", "ETHUSD")
+
+
+def test_cost_model_defaults_are_the_production_fee_schedule() -> None:
+    """Verified 2026-10-02 from public /v2/products: PRODUCTION options 0.0001 rate, 3.5% cap; TESTNET charges more
+    (0.0003, 10%). Back-tests must not be made stricter than production, so the defaults stay on production's."""
+    from delta_intelligence.config.settings import CostModel
+
+    c = CostModel()
+    assert (c.fallback_taker_rate, c.fallback_maker_rate, c.fallback_premium_cap_rate) == (0.0001, 0.0001, 0.035)

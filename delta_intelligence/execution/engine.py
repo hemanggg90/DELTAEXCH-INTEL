@@ -277,7 +277,7 @@ class TradingEngine:
                 statuses.append(f"{v.key}: setup {setup.direction} ignored (already holding a {u.asset} position)")
                 continue
             snap = self.broker.account_snapshot()
-            acct = self.tracker.account_state(snap, now, self.broker.is_connected(), kill_switch)
+            acct = self.tracker.account_state(snap, now, self.broker.is_connected(), kill_switch, self.broker.mode)
             res = plan_trade(strat, v.moneyness, setup, u, chain, index_spot, float(last["close"]), now,
                              self.settings, snap, relative_volume=last.get("relative_volume"), iv_percentile=ivp,
                              data_quality=quality)

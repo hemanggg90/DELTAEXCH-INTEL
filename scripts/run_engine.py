@@ -1,10 +1,13 @@
 """
-Run the 24x7 PAPER trading engine headless (the P5 48-hour gate test, or a VPS without the dashboard).
+Run the 24x7 trading engine headless (the P5 48-hour gate test, or a VPS without the dashboard).
 
     python scripts/run_engine.py                 # Ctrl+C to stop
 
-- Uses public production market data. No API keys are needed in PAPER mode.
-- Paper-trades only the ACTIVE variants (strategies/active.py) through the risk engine.
+- PAPER (default): public production market data, no API keys.
+- LIVE: only with TRADING_MODE=LIVE and TRADING_LIVE_CONFIRM=YES_I_UNDERSTAND_THE_RISK plus keys for DELTA_ENV
+  (testnet by default). The startup gate (connectivity + IP whitelist) must pass and the engine reconciles with
+  the exchange before its first trade. Market data then comes from the trading venue.
+- Trades only the ACTIVE variants (strategies/active.py) through the risk engine.
 - Records option-chain snapshots every 5 minutes.
 - Prints a status line every 5 minutes. Everything is persisted in the database (default data_cache/).
 - The process must not sleep: disable sleep on this PC, or run it on a VPS.
@@ -44,21 +47,30 @@ def iv_history(settings) -> dict:
 
 def build_engine():
     s = get_settings()
-    if s.is_live_mode:
-        raise SystemExit("run_engine.py is PAPER-only; live trading arrives in P7 behind the double gate")
+    if s.is_live_mode and not s.live_mode_fully_authorized:
+        raise SystemExit("TRADING_MODE=LIVE also needs TRADING_LIVE_CONFIRM=YES_I_UNDERSTAND_THE_RISK; refusing")
     db.init_db()
     client = public_client(s)
     assets = tuple(UNDERLYINGS[p].asset for p in get_watchlist())
-    broker = PaperBroker(lambda: fetch_chain(client, assets, max_age=15), s)
+    chain_fn = lambda: fetch_chain(client, assets, max_age=15)  # noqa: E731
+    if s.is_live_mode:
+        from delta_intelligence.brokers.live_gate import LiveGateError, build_live_broker
+
+        try:
+            broker = build_live_broker(chain_fn, s)
+        except LiveGateError as exc:
+            raise SystemExit(str(exc))
+    else:
+        broker = PaperBroker(chain_fn, s)
     feed = TickerFeed(s.ws_url(private=False), list(get_watchlist()))
-    return TradingEngine(broker, lambda: fetch_chain(client, assets, max_age=15), DataManager.from_settings(s), s,
+    return TradingEngine(broker, chain_fn, DataManager.from_settings(s), s,
                          feed=feed, iv_history=iv_history(s))
 
 
 def main() -> int:
     eng = build_engine()
     eng.start()
-    print(f"engine started {fmt_ist(now_utc())} - PAPER - variants: {', '.join(v.key for v in eng.variants)}", flush=True)
+    print(f"engine started {fmt_ist(now_utc())} - {eng.broker.mode} - variants: {', '.join(v.key for v in eng.variants)}", flush=True)
     try:
         while True:
             time.sleep(300)

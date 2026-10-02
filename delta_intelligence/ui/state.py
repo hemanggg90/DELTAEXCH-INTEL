@@ -2,7 +2,8 @@
 Shared, process-wide resources for the Streamlit app.
 
 - `get_engine()` holds the trading engine via `st.cache_resource`, so it survives reruns, page switches and closed
-  tabs. It is NOT started automatically: the user starts it, behind the password gate. Only one engine may run per
+  tabs. In LIVE mode it is None until the Live page builds it behind the startup gate. It is NOT started
+  automatically: the user starts it, behind the password gate. Only one engine may run per
   database: a fresh heartbeat from any other engine disables Start.
 - Market data comes from the public client with process-wide caches. Every tab shares one chain request every few
   seconds instead of hitting Delta per rerun.
@@ -79,8 +80,7 @@ def tickers() -> dict:
 
 
 @st.cache_resource(show_spinner=False)
-def get_engine():
-    """The paper engine for THIS Streamlit process (not started here)."""
+def _paper_engine():
     from delta_intelligence.brokers.paper_broker import PaperBroker
     from delta_intelligence.brokers.ws_feed import TickerFeed
     from delta_intelligence.execution.engine import TradingEngine
@@ -93,11 +93,55 @@ def get_engine():
     return TradingEngine(broker, chain_fn, data_manager(), s, feed=feed, iv_history=iv_history())
 
 
-def broker():
+@st.cache_resource(show_spinner=False)
+def _live_box() -> dict:
+    """Holds the LIVE engine once the user has built it on the Live page. Never built implicitly."""
+    return {"engine": None}
+
+
+def live_mode() -> bool:
+    return get_settings().is_live_mode
+
+
+def get_engine():
+    """The engine for THIS Streamlit process (not started here). PAPER: always available. LIVE: None until the
+    Live page has passed the startup gate and built it (`build_live_engine`)."""
+    if live_mode():
+        return _live_box()["engine"]
+    return _paper_engine()
+
+
+def build_live_engine():
+    """Run the LIVE startup gate (double gate + read-only connectivity check) and build the live engine. Raises
+    LiveGateError when anything is unmet. The engine is returned stopped; the caller starts it."""
+    from delta_intelligence.brokers.live_gate import build_live_broker
+    from delta_intelligence.brokers.ws_feed import TickerFeed
+    from delta_intelligence.execution.engine import TradingEngine
+
+    box = _live_box()
+    if box["engine"] is not None:
+        return box["engine"]
+    s = get_settings()
+    ensure_db()
+    chain_fn = lambda: fetch_chain(public(), assets(), max_age=15)  # noqa: E731
+    broker = build_live_broker(chain_fn, s)
+    feed = TickerFeed(s.ws_url(private=False), list(get_watchlist()))
+    box["engine"] = TradingEngine(broker, chain_fn, data_manager(), s, feed=feed, iv_history=iv_history())
+    return box["engine"]
+
+
+def paper_broker():
+    """Always the paper book (the manual paper ticket must never reach a live broker)."""
     from delta_intelligence.brokers.paper_broker import PaperBroker
 
     ensure_db()
     return PaperBroker(chain, get_settings())
+
+
+def broker():
+    """The ACTIVE book: the live broker once the live engine is built in LIVE mode, otherwise the paper book."""
+    eng = _live_box()["engine"] if live_mode() else None
+    return eng.broker if eng is not None else paper_broker()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -125,7 +169,8 @@ def engine_heartbeat() -> tuple[dt.datetime | None, float | None]:
 def external_engine_running() -> bool:
     """True when some engine (headless script or another app process) is heartbeating, and it isn't ours."""
     _, age = engine_heartbeat()
-    ours = get_engine().is_running() if not offline() else False
+    eng = None if offline() else get_engine()
+    ours = eng.is_running() if eng is not None else False
     return age is not None and age < 120 and not ours
 
 

@@ -146,7 +146,7 @@ if q and q.ask:
 
         hist = state.iv_history().get(u.asset)
         iv_pct = iv_percentile(summ.atm_iv, hist, pd.Timestamp(now_utc())) if summ and hist is not None else None
-        b = state.broker()
+        b = state.paper_broker()
         snap = b.account_snapshot()
         acct = AccountTracker(s).account_state(snap, now_utc(), True, kill_switch_on())
         prop = ProposedTrade("Manual", u.asset, u.correlated_bucket, st_.name, st_.direction, cost + fee, cost + fee,

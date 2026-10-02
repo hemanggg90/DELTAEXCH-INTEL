@@ -7,7 +7,8 @@ Restart recovery: run once when the engine starts, BEFORE any new trade.
 3. Closes positions whose underlying stop or target was crossed while down (from the perp candles since the last
    heartbeat). They exit at the CURRENT market, which may be worse than the level; the reason records that.
 
-Live mode (P7) additionally reconciles against exchange positions and orders before trading.
+In LIVE mode the broker first reconciles the database against the exchange's positions and orders. A critical
+mismatch engages the kill switch (no new trades) and is returned in the summary.
 """
 from __future__ import annotations
 
@@ -41,6 +42,15 @@ def recover(broker, data_manager, now: dt.datetime) -> dict:
               last_heartbeat=hb.isoformat() if hb else None)
     asset_to = {u.asset: u for u in UNDERLYINGS.values()}
     settled, closed, errors = [], [], []
+    reconcile = None
+    if getattr(broker, "mode", "PAPER") == "LIVE":
+        try:
+            reconcile = broker.reconcile()
+        except Exception as exc:  # can't verify the exchange: do not trade blind
+            from delta_intelligence.execution.engine import set_kill_switch
+
+            reconcile = {"ok": False, "critical": [f"reconcile failed: {exc}"], "notes": []}
+            set_kill_switch(True, f"live reconcile failed at start: {exc}")
     for it in broker.open_positions():
         p = it["position"]
         u = asset_to.get(p.underlying)
@@ -57,8 +67,14 @@ def recover(broker, data_manager, now: dt.datetime) -> dict:
                 settled.append(p.position_id)
                 continue
             since = hb or from_db_time(p.opened_at)
+            # Nothing to look for without a stop, and no CLOSED 5m bar exists in a window under 5 minutes (Delta then
+            # returns no candles, which used to be reported as an error). The engine's first cycle checks the live
+            # perp price against the stop either way.
+            if p.underlying_stop is None or p.direction not in ("LONG", "SHORT") or \
+                    (now - since).total_seconds() < 300:
+                continue
             perp, _ = data_manager.get_ohlcv(u.perp_symbol, "5m", since, now)
-            if len(perp) and p.underlying_stop is not None and p.direction in ("LONG", "SHORT"):
+            if len(perp):
                 hit = (perp["low"].min() <= p.underlying_stop) if p.direction == "LONG" else \
                     (perp["high"].max() >= p.underlying_stop)
                 tgt = p.underlying_target is not None and (
@@ -70,6 +86,7 @@ def recover(broker, data_manager, now: dt.datetime) -> dict:
                         closed.append(p.position_id)
         except Exception as exc:
             errors.append(f"{p.position_id}: {type(exc).__name__}: {exc}")
-    summary = {"downtime_minutes": down_min, "settled": settled, "closed": closed, "errors": errors}
+    summary = {"downtime_minutes": down_min, "settled": settled, "closed": closed, "errors": errors,
+               "reconcile": reconcile}
     log_event("engine", "restart recovery finished", level="WARNING" if errors else "INFO", **summary)
     return summary
