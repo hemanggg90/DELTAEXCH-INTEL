@@ -52,6 +52,8 @@ def iv_percentile(current_iv: float, history: pd.Series, now: pd.Timestamp, look
     the history is too short to be meaningful."""
     if current_iv is None or not np.isfinite(current_iv):
         return None
+    if history is None or not len(history) or not isinstance(history.index, pd.DatetimeIndex):
+        return None
     h = history.dropna()
     h = h[(h.index <= now) & (h.index > now - pd.Timedelta(days=lookback_days))]
     if len(h) < min_obs:

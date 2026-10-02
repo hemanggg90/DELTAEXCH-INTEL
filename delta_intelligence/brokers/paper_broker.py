@@ -63,6 +63,9 @@ class TradePlan:
     underlying_target: float | None = None
     decision_id: str | None = None
     risk_decision_id: str | None = None
+    time_stop_at: object = None  # tz-aware datetime
+    premium_stop_pct: float | None = None
+    expected_hold_hours: float | None = None
 
 
 @dataclass
@@ -168,6 +171,9 @@ class PaperBroker:
                     max_loss=paid + fees, max_profit=None if mp == float("inf") else mp, reserved_margin=0.0,
                     fees=fees, underlying_stop=plan.underlying_stop, underlying_target=plan.underlying_target,
                     decision_id=plan.decision_id, risk_decision_id=plan.risk_decision_id, incomplete=incomplete,
+                    time_stop_at=to_db_time(plan.time_stop_at) if plan.time_stop_at is not None else None,
+                    premium_stop_value=paid * (1 - plan.premium_stop_pct / 100) if plan.premium_stop_pct else None,
+                    expected_hold_hours=plan.expected_hold_hours,
                     notes="a leg could not fill; the bought leg was kept" if incomplete else None))
                 for leg in st.legs:
                     price = next((p for lg, p in filled if lg is leg), None)

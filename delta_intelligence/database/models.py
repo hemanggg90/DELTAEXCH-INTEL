@@ -97,7 +97,10 @@ class Position(Base):
     exit_reason = Column(String(32))
     decision_id = Column(String(32))
     risk_decision_id = Column(String(32))
-    incomplete = Column(Boolean, default=False)  # a spread whose short leg failed (long leg kept: still defined risk)
+    incomplete = Column(Boolean, default=False)  # a straddle/strangle leg failed; the bought leg was kept
+    time_stop_at = Column(DateTime)  # strategy time stop (UTC)
+    premium_stop_value = Column(Float)  # USD structure value at which the premium stop fires
+    expected_hold_hours = Column(Float)
     notes = Column(Text)
 
 
@@ -188,3 +191,26 @@ class ResearchReport(Base):
     body_markdown = Column(Text, nullable=False)
     data = Column(JSON)
     created_at = Column(DateTime, default=utcnow)
+
+
+class ChainSnapshot(Base):
+    """Recorded option-chain rows (P5 chain recorder). Builds a REAL bid/ask history over time. Backtests that use it
+    are labelled RECORDED_CHAIN."""
+    __tablename__ = "chain_snapshots"
+    id = Column(Integer, primary_key=True)
+    taken_at = Column(DateTime, nullable=False, index=True)
+    underlying = Column(String(8), nullable=False, index=True)
+    symbol = Column(String(48), nullable=False)
+    kind = Column(String(1), nullable=False)
+    strike = Column(Float, nullable=False)
+    expiry = Column(DateTime, nullable=False)
+    spot = Column(Float)
+    bid = Column(Float)
+    ask = Column(Float)
+    bid_size = Column(Float)
+    ask_size = Column(Float)
+    mark = Column(Float)
+    mark_iv = Column(Float)
+    delta = Column(Float)
+    open_interest = Column(Float)
+    volume = Column(Float)

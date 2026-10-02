@@ -315,8 +315,20 @@ VERIFIED (docs).
   `spot_30mtwap_price`, `funding_rate`, `product_updates`, `system_status`.
 - Private: `margins`, `positions`, `orders`, `user_trades`, `v2/user_trades`, `portfolio_margins`, `mmp_trigger`.
 - Several legacy channels were moved to the new public endpoint.
-- **UNVERIFIED:** the exact subscription name strings (e.g. `v2/ticker` vs `ticker`, `l2_orderbook` vs `ob_l2`) and
-  payload schemas. Confirm against testnet in P5 and record the result here.
+- **VERIFIED (live, production, 2026-10-02): channel names and payloads**
+  - Public socket `wss://public-socket.india.delta.exchange`:
+    - channel **`ticker`** (`v2/ticker` returns nothing there);
+    - messages are COMPACT: `{"type":"ticker","sy":symbol,"sp":spot,"ts":µs,"d":[{"s":symbol,"i":product_id,"m":mark,
+      "q":[best_ask, ask_size, best_bid, bid_size, ?],"qiv":[ask_iv, bid_iv, mark_iv],"oi":[contracts, value],
+      "g":[5 greeks],"ohlc":[o,h,l,c],"pb":[band_lo, band_hi]}]}`;
+    - the ask/bid order is verified by ask > bid;
+    - the ORDER of the 5 greeks in `g` is UNVERIFIED (it looks like delta, gamma, rho, theta, vega), so greeks are
+      taken from REST.
+  - Private socket `wss://socket.india.delta.exchange`: channel **`v2/ticker`** works WITHOUT auth and sends the full
+    REST-style ticker (`type:"v2/ticker"`). There, `ticker` returns nothing.
+  - Both sockets answer `{"type":"enable_heartbeat"}` with `{"type":"heartbeat"}` messages (seen every few seconds
+    while subscribed).
+  - The private channels (orders, positions) still need key-auth on the private socket. Confirm on testnet in P7.
 
 ## 11. Fees and GST
 
