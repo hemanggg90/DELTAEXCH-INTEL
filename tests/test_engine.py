@@ -306,3 +306,16 @@ def test_one_position_per_variant_per_underlying(env) -> None:
     with db.get_session() as s:
         assert s.query(Position).count() == 2
         assert "already holding" in s.query(Decision).order_by(Decision.id.desc()).first().no_trade_reason
+
+
+def test_second_engine_refuses_to_start_while_another_is_alive(env) -> None:
+    from delta_intelligence.execution.engine import OWNER_KEY
+
+    db.set_state(OWNER_KEY, {"id": "otherhost:999"})
+    db.set_state("engine_heartbeat", NOW.isoformat())
+    eng = make_engine(env, lambda perp, now: (flip_frame(), "OK"))
+    with pytest.raises(RuntimeError, match="double-trade"):
+        eng.start()
+    db.set_state("engine_heartbeat", (NOW - dt.timedelta(minutes=10)).isoformat())  # stale owner: allowed
+    eng.start()
+    eng.stop()

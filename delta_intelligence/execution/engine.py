@@ -44,8 +44,28 @@ from delta_intelligence.utils.logging_utils import log_event, new_decision_id
 from delta_intelligence.utils.timeutil import last_closed_bar_start, now_utc
 
 KILL_SWITCH_KEY = "kill_switch"
+OWNER_KEY = "engine_owner"
+OWNER_STALE_SEC = 120  # an owner whose heartbeat is older than this is considered gone
 LAST_BAR_KEY = "last_scanned_bar"  # persisted, so a restart never re-processes (and re-trades) the same bar
 LOOKBACK_DAYS = 70  # features (EMA200, 24 h vol) + daily context (MA50) need this much history
+
+
+def owner_id() -> str:
+    import os
+    import socket
+
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def other_engine_alive(now: dt.datetime) -> dict | None:
+    """The registered engine owner if it is NOT this process and its heartbeat is fresh; otherwise None. PIDs are
+    only recorded, never signalled (on Windows os.kill would terminate the process)."""
+    owner = db.get_state(OWNER_KEY)
+    hb = db.get_state(HEARTBEAT_KEY)
+    if not owner or not hb or owner.get("id") == owner_id():
+        return None
+    age = (now - dt.datetime.fromisoformat(hb)).total_seconds()
+    return {**owner, "heartbeat_age_sec": age} if age < OWNER_STALE_SEC else None
 
 
 def kill_switch_on() -> bool:
@@ -92,6 +112,11 @@ class TradingEngine:
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
+            other = other_engine_alive(self.clock())
+            if other is not None:
+                raise RuntimeError(f"another engine is already running ({other['id']}, heartbeat "
+                                   f"{other['heartbeat_age_sec']:.0f}s ago). Two engines would double-trade.")
+            db.set_state(OWNER_KEY, {"id": owner_id(), "started_at": self.clock().isoformat()})
             self._stop.clear()
             self.started_at = self.clock()
             try:
