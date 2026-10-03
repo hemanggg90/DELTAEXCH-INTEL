@@ -11,9 +11,10 @@ from delta_intelligence.execution.account import AccountTracker
 from delta_intelligence.execution.engine import kill_switch_on
 from delta_intelligence.strategies.active import ACTIVE_VARIANTS
 from delta_intelligence.ui import state
+from delta_intelligence.ui.amounts import used_today
 from delta_intelligence.ui.components import (DECISION_TONE, can_control, control_note, empty_state, entity_card,
                                               kpi_row, meter, notice, page_setup, status_label, table)
-from delta_intelligence.ui.format import duration, money, num, pnl, tone, usd
+from delta_intelligence.ui.format import duration, inr, money, num, pnl, pnl_inr, tone, usd
 from delta_intelligence.utils.timeutil import fmt_ist, now_utc
 
 page_setup("Command Center", "Research software, not financial advice. The backtests found no proven edge (see "
@@ -33,13 +34,17 @@ def account_tiles() -> None:
     day_pnl = None if day_start is None else snap["equity"] - float(day_start)
     vs_start = snap["equity"] - s.paper_starting_capital_usd
     ks = kill_switch_on()
+    today = used_today(now_utc(), mode, s.clocks.risk_day_tz, s.clocks.risk_day_start)
     kpi_row([
         {"label": "LIVE equity" if live else "Paper equity", "value": usd(snap["equity"]),
          "delta": None if live else pnl(vs_start) + " vs start", "tone": tone(vs_start),
          "help": money(snap["equity"], rate)},
-        {"label": "Today P&L", "help": "Risk day since 00:00 IST", "value": pnl(day_pnl), "tone": tone(day_pnl)},
+        {"label": "Today P&L", "help": "Risk day since 00:00 IST", "value": pnl(day_pnl), "tone": tone(day_pnl),
+         "delta": pnl_inr(day_pnl, rate) if day_pnl is not None else None},
+        {"label": "Amount used today", "value": usd(today["used"]), "delta": f"≈ {inr(today['used'], rate)}",
+         "help": f"Premium + entry fees of {today['trades']} position(s) opened since 00:00 IST"},
         {"label": "Open positions", "value": f"{snap['open_positions']} / {s.risk.max_concurrent_positions}"},
-        {"label": "Premium at risk", "value": usd(snap["total_exposure"]),
+        {"label": "Premium at risk", "value": usd(snap["total_exposure"]), "help": money(snap["total_exposure"], rate),
          "delta": f"{snap['total_exposure'] / snap['equity'] * 100:.2f}% of equity" if snap["equity"] else None},
         {"label": "Trades today", "value": f"{tracker.trades_today(now_utc(), mode)} / {s.risk.max_trades_per_day}"},
         {"label": "Kill switch", "value": "✖ ON" if ks else "○ off", "delta": "no new trades" if ks else None,
@@ -48,6 +53,7 @@ def account_tiles() -> None:
 
 
 account_tiles()
+st.caption(f"₹ figures are estimates at ₹{rate:,.2f}/$ (USDINR_RATE). The book settles in USD.")
 
 left, right = st.columns([3, 2])
 with left:

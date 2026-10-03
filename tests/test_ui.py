@@ -100,3 +100,44 @@ def test_controls_follow_password_and_mode(monkeypatch, password, mode, authed, 
     monkeypatch.setattr(components, "get_settings", lambda: s)
     monkeypatch.setattr(st, "session_state", {"_authed": authed})
     assert components.can_control() is expected
+
+
+def test_inr_pnl_and_default_rate() -> None:
+    from delta_intelligence.config.settings import DEFAULT_USDINR_RATE, Settings
+    from delta_intelligence.ui.format import pnl_inr
+
+    assert pnl_inr(10, 84.0) == "▲ +₹840" and pnl_inr(-10, 84.0) == "▼ -₹840" and pnl_inr(0, 84.0) == "■ ₹0"
+    assert pnl_inr(None, 84.0) == "–" and pnl_inr(5, None) == "–"
+    assert Settings.from_env({}).usdinr_rate == DEFAULT_USDINR_RATE
+    assert Settings.from_env({"USDINR_RATE": "83.5"}).usdinr_rate == 83.5
+
+
+def test_amount_used_today_counts_only_the_risk_day(tmp_path) -> None:
+    import datetime as dt
+
+    from delta_intelligence.database import db
+    from delta_intelligence.database.models import Position
+    from delta_intelligence.ui.amounts import order_amount, used_today
+
+    assert order_amount(500.0, 100, 0.001) == 50.0 and order_amount(None, 1, 0.001) is None
+    assert order_amount(1.0, 1, None) is None
+    db.reset_engine()
+    db.init_db(f"sqlite:///{(tmp_path / 'a.db').as_posix()}")
+    try:
+        now = dt.datetime(2026, 10, 3, 12, 0, tzinfo=dt.timezone.utc)  # 17:30 IST; risk day began 18:30 UTC on 2 Oct
+        exp = now + dt.timedelta(days=1)
+
+        def pos(pid, opened, max_loss, pnl=None, mode="PAPER"):
+            return Position(position_id=pid, mode=mode, underlying="BTC", structure="LONG_CALL", expiry=exp,
+                            status="CLOSED" if pnl is not None else "OPEN", opened_at=opened.replace(tzinfo=None),
+                            entry_net_premium=max_loss - 1, max_loss=max_loss, realized_pnl=pnl)
+
+        with db.get_session() as s:
+            s.add_all([pos("a", now - dt.timedelta(hours=1), 51.0, -10.0),
+                       pos("b", now - dt.timedelta(hours=2), 30.0),
+                       pos("c", dt.datetime(2026, 10, 2, 18, 0), 99.0, 5.0),  # 23:30 IST on 2 Oct: yesterday
+                       pos("d", now - dt.timedelta(hours=1), 70.0, mode="LIVE")])
+        t = used_today(now, "PAPER")
+        assert t == {"used": 81.0, "trades": 2, "realized": -10.0}
+    finally:
+        db.reset_engine()

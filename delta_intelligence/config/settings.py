@@ -250,6 +250,10 @@ class ClockSettings:
         )
 
 
+# Display-only USD->INR conversion used when USDINR_RATE is not set. Set USDINR_RATE to the current rate.
+DEFAULT_USDINR_RATE = 88.0
+
+
 @dataclass(frozen=True)
 class Settings:
     delta_env: str = "TESTNET"
@@ -270,7 +274,7 @@ class Settings:
     data_cache_dir: Path = PROJECT_ROOT / "data_cache"
     logs_dir: Path = PROJECT_ROOT / "logs"
 
-    usdinr_rate: float | None = None
+    usdinr_rate: float = DEFAULT_USDINR_RATE  # display only: INR is always labelled an estimate
     paper_starting_capital_usd: float = 10_000.0
     default_timeframe: str = "5m"
     lookback_days: int = 60
@@ -306,7 +310,7 @@ class Settings:
             database_url=e.str("DATABASE_URL") or f"sqlite:///{(cache_dir / 'delta_intelligence.db').as_posix()}",
             data_cache_dir=cache_dir,
             logs_dir=Path(e.str("LOGS_DIR") or PROJECT_ROOT / "logs"),
-            usdinr_rate=e.opt_float("USDINR_RATE"),
+            usdinr_rate=e.opt_float("USDINR_RATE") or DEFAULT_USDINR_RATE,
             paper_starting_capital_usd=e.float("PAPER_STARTING_CAPITAL_USD", 10_000.0),
             default_timeframe=e.str("DEFAULT_TIMEFRAME", "5m"),
             lookback_days=max(10, min(180, e.int("LOOKBACK_DAYS", 60))),

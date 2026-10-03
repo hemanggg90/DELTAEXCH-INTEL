@@ -89,6 +89,15 @@ def pnl(x: float | None, rate: float | None = None) -> str:
     return base if rate is None else f"{base} (≈ {inr(x, rate)})"
 
 
+def pnl_inr(x_usd: float | None, rate: float | None) -> str:
+    """INR estimate of a P&L: '▲ +₹1,034' / '▼ -₹345' / '■ ₹0'."""
+    if _missing(x_usd) or rate is None:
+        return MISSING
+    x = float(x_usd)
+    tri = "▲" if x > 0 else ("▼" if x < 0 else "■")
+    return f"{tri} {'+' if x > 0 else ''}{inr(x, rate)}"
+
+
 def pct(x: float | None, decimals: int = 1, signed: bool = False) -> str:
     if _missing(x):
         return MISSING

@@ -160,7 +160,7 @@ with st.container(border=True):
         with c_left:
             kv_grid([("Symbol", sym), ("Expiry", fmt_ist(exp, "%d %b %H:%M IST")),
                      ("Premium (ask)", money(cost, rate)), ("Fees + GST (entry)", usd(fee)),
-                     ("Max loss", money(cost + fee, rate)), ("Breakeven at expiry", num(be[0]) if be else "–"),
+                     ("Amount used = max loss", money(cost + fee, rate)), ("Breakeven at expiry", num(be[0]) if be else "–"),
                      ("Spread", pct((q.ask - q.bid) / q.mid * 100) if q.bid else "–"),
                      ("Contract", f"{cv} {u.asset}"), ("Open interest", num(q.open_interest, 0)),
                      ("Ask size", num(q.ask_size, 0))])

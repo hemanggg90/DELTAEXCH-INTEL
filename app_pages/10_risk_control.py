@@ -10,9 +10,10 @@ from delta_intelligence.database.models import RiskEvent, from_db_time
 from delta_intelligence.execution.account import AccountTracker
 from delta_intelligence.execution.engine import KILL_SWITCH_KEY, kill_switch_on, set_kill_switch
 from delta_intelligence.ui import state
+from delta_intelligence.ui.amounts import used_today
 from delta_intelligence.ui.components import (can_control, control_note, entity_card, kpi_row, notice, page_setup,
                                               status_label, table)
-from delta_intelligence.ui.format import pnl, tone, usd
+from delta_intelligence.ui.format import inr, money, pnl, pnl_inr, tone, usd
 from delta_intelligence.utils.timeutil import fmt_ist, now_utc
 
 page_setup("Risk Control", "Deterministic checks with the last word. BUYING ONLY: sell-to-open is impossible at three "
@@ -26,9 +27,13 @@ snap = state.broker().account_snapshot()
 acct = AccountTracker(s).account_state(snap, now_utc(), True, on)
 eq = acct.equity
 dd_pct = (acct.peak_equity - eq) / acct.peak_equity * 100 if acct.peak_equity else 0.0
+today = used_today(now_utc(), getattr(state.broker(), "mode", "PAPER"), s.clocks.risk_day_tz, s.clocks.risk_day_start)
 kpi_row([
-    {"label": "Equity", "value": usd(eq), "help": f"peak {usd(acct.peak_equity)}"},
-    {"label": "Today P&L", "help": "Risk day since 00:00 IST", "value": pnl(acct.daily_pnl), "tone": tone(acct.daily_pnl)},
+    {"label": "Equity", "value": usd(eq), "help": f"{money(eq, s.usdinr_rate)} · peak {usd(acct.peak_equity)}"},
+    {"label": "Today P&L", "help": "Risk day since 00:00 IST", "value": pnl(acct.daily_pnl), "tone": tone(acct.daily_pnl),
+     "delta": pnl_inr(acct.daily_pnl, s.usdinr_rate)},
+    {"label": "Amount used today", "value": usd(today["used"]), "delta": f"≈ {inr(today['used'], s.usdinr_rate)}",
+     "help": "Premium + entry fees of positions opened since 00:00 IST"},
     {"label": "Drawdown from peak", "value": f"{dd_pct:.2f}%", "delta": f"limit {lim.max_drawdown_pct}%"},
     {"label": "Trades today", "value": f"{acct.trades_today} / {lim.max_trades_per_day}"},
     {"label": "Kill switch", "value": "✖ ON" if on else "○ off", "tone": "critical" if on else "neutral",
