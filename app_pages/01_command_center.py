@@ -62,7 +62,8 @@ left, right = st.columns([3, 2])
 with left:
     st.subheader("Engine")
     hb, age = state.engine_heartbeat()
-    external = (not state.offline()) and state.external_engine_running()
+    orphan = state.orphan_engine_in_process()
+    external = (not state.offline()) and not orphan and state.external_engine_running()
     eng = None if state.offline() else state.get_engine()
     with st.container(border=True):
         if eng is not None and eng.is_running():
@@ -73,6 +74,18 @@ with left:
             if c[1].button("Stop engine", disabled=not can_control(), width="stretch"):
                 eng.stop()
                 st.rerun()
+        elif orphan:
+            c = st.columns([4, 1], vertical_alignment="center")
+            with c[0]:
+                notice("warning", "An engine from BEFORE the last deploy is still running inside this app with the old code "
+                                  "(no ranker, so it only trades the two Supertrend variants). Click Start to replace it with "
+                                  "the current engine. (Or use Manage app → Reboot app.)")
+            if c[1].button("Start (replace old)", type="primary", disabled=not can_control() or eng is None, width="stretch"):
+                try:
+                    eng.start()
+                    st.rerun()
+                except RuntimeError as exc:
+                    notice("critical", str(exc))
         elif external:
             from delta_intelligence.execution.engine import code_version
             from delta_intelligence.execution.ranker_setup import ranker_mode

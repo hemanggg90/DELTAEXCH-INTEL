@@ -191,6 +191,15 @@ def external_engine_owner() -> dict:
     return db.get_state(OWNER_KEY, {}) or {}
 
 
+def orphan_engine_in_process() -> bool:
+    """True when an engine thread from an earlier version of this app (before a redeploy) is still running in this process."""
+    from delta_intelligence.execution.engine import other_engines_in_process
+
+    if offline():
+        return False
+    return bool(other_engines_in_process(get_engine()))
+
+
 def external_engine_running() -> bool:
     """True when some engine (headless script or another app process) is heartbeating, and it isn't ours."""
     _, age = engine_heartbeat()

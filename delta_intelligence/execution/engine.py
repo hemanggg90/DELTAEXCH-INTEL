@@ -86,6 +86,23 @@ def other_engine_alive(now: dt.datetime) -> dict | None:
     return {**owner, "heartbeat_age_sec": age} if age < OWNER_STALE_SEC else None
 
 
+def other_engines_in_process(me=None) -> list:
+    """Engines whose loop thread is still alive in THIS process, other than `me`.
+
+    After a redeploy Streamlit rebuilds its cached engine object (the cache key includes the code), but the previous engine's
+    thread keeps running in the same process with the OLD code. That orphan keeps heartbeating (so the dashboard sees "another
+    engine") and keeps trading with old logic, while the new engine cannot be started. These are found from the live threads
+    (the loop thread's bound method points at its engine), so the new code can stop them."""
+    out = []
+    for t in threading.enumerate():
+        if t.name != "trading-engine" or not t.is_alive():
+            continue
+        eng = getattr(getattr(t, "_target", None), "__self__", None)
+        if eng is not None and eng is not me and hasattr(eng, "stop") and hasattr(eng, "_stop"):
+            out.append(eng)
+    return out
+
+
 def kill_switch_on() -> bool:
     v = db.get_state(KILL_SWITCH_KEY, {"on": False}) or {}
     return bool(v.get("on"))
@@ -136,6 +153,13 @@ class TradingEngine:
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
+            for old in other_engines_in_process(self):  # a leftover engine from before a redeploy: replace it, never run two
+                old.stop()
+                t = getattr(old, "_thread", None)
+                if t is not None:
+                    t.join(timeout=15)
+                log_event("engine", "stopped an engine left over from before a redeploy (old code); starting the current one",
+                          level="WARNING")
             other = other_engine_alive(self.clock())
             if other is not None:
                 raise RuntimeError(f"another engine is already running ({other['id']}, heartbeat "

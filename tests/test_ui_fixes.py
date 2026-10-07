@@ -117,3 +117,42 @@ def test_old_owner_records_still_work_for_the_other_engine_check(env) -> None:
 def test_code_version_is_a_short_hash_or_unknown() -> None:
     v = code_version()
     assert v == "unknown" or (len(v) == 7 and all(c in "0123456789abcdef" for c in v))
+
+
+# ---- an engine left over from before a redeploy ----------------------------------------------------------------------------------------
+def test_a_leftover_engine_is_found_and_replaced_instead_of_blocking_start(env) -> None:
+    """After a redeploy Streamlit builds a NEW engine object while the OLD engine's thread keeps running in the same process (with
+    the old code). The new engine must be able to replace it, and never run alongside it."""
+    from delta_intelligence.execution.engine import other_engines_in_process
+
+    s, box, broker = env
+
+    def make():
+        return TradingEngine(broker, lambda: box["chain"], FakeDM(), s, clock=lambda: NOW, interval_sec=30.0,
+                             frame_builder=lambda perp, now: (flip_frame(), "OK"))
+
+    old, new = make(), make()
+    old.start()
+    try:
+        assert old.is_running() and not new.is_running()
+        assert other_engines_in_process(new) == [old] and other_engines_in_process(old) == []  # seen from the new engine only
+        new.start()  # replaces the old one
+        assert new.is_running() and not old.is_running()
+        assert other_engines_in_process(new) == []  # exactly one engine thread remains
+        rec = db.get_state(OWNER_KEY)
+        assert rec["version"] == code_version() and rec["ranker_mode"] == "off"
+    finally:
+        new.stop()
+        old.stop()
+
+
+def test_stopped_engines_are_not_reported_as_leftovers(env) -> None:
+    from delta_intelligence.execution.engine import other_engines_in_process
+
+    s, box, broker = env
+    a = TradingEngine(broker, lambda: box["chain"], FakeDM(), s, clock=lambda: NOW, interval_sec=30.0,
+                      frame_builder=lambda perp, now: (flip_frame(), "OK"))
+    a.start()
+    a.stop()
+    a._thread.join(timeout=15)
+    assert other_engines_in_process(None) == []
