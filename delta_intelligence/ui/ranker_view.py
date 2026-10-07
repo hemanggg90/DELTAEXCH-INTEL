@@ -29,6 +29,32 @@ def iv_panel(asset: str) -> None:
     st.caption(st_["note"])
 
 
+LEADERBOARD_COLUMNS = ["rank", "strategy", "signal now", "score", "edge_r", "confidence", "samples", "eligible", "chosen", "note"]
+
+
+def leaderboard_frame(rows: list[dict]) -> pd.DataFrame:
+    """The ranker table as shown on the dashboard. Tolerant of OLDER saved decisions: an engine running older code stored only the
+    strategies with a signal and had no `rank` / `selected` columns, so missing columns are derived or left blank, never a crash."""
+    t = pd.DataFrame(rows)
+    if t.empty:
+        return pd.DataFrame(columns=LEADERBOARD_COLUMNS)
+    if "strategy" not in t:
+        return pd.DataFrame(columns=LEADERBOARD_COLUMNS)
+    n = len(t)
+    note = t["note"] if "note" in t else pd.Series([None] * n, index=t.index)
+    setup = t["setup"] if "setup" in t else pd.Series([True] * n, index=t.index)  # old tables listed only signalling strategies
+    selected = t["selected"] if "selected" in t else note.eq("SELECTED")
+    out = pd.DataFrame({
+        "rank": t["rank"] if "rank" in t else pd.Series(range(1, n + 1), index=t.index),
+        "strategy": t["strategy"],
+        "signal now": setup.map({True: "yes", False: "-"}).fillna("-"),
+        "score": t["score"] if "score" in t else None, "edge_r": t["edge_r"] if "edge_r" in t else None,
+        "confidence": t["confidence"] if "confidence" in t else None, "samples": t["samples"] if "samples" in t else None,
+        "eligible": t["eligible"] if "eligible" in t else None,
+        "chosen": selected.map({True: "◀ SELECTED", False: ""}).fillna(""), "note": note})
+    return out[LEADERBOARD_COLUMNS]
+
+
 def ranker_note(decision) -> None:
     """The ranker's verdict and the FULL leaderboard stored on a Decision (`Decision.ranking['ranker']`): every strategy is
     scored each bar, signalling or not; only a strategy with a signal right now can be traded."""
@@ -45,11 +71,8 @@ def ranker_note(decision) -> None:
         st.caption(f"Overall leader: **{lead['strategy']}** (score {lead['score']}), "
                    + ("it has a signal now." if lead["has_setup"] else "waiting for its signal."))
     st.caption(f"{r.get('n_with_setup', 0)} of {r.get('n_candidates', 0)} strategies have a signal on this bar. {r.get('evidence', '')}")
-    table = pd.DataFrame(r.get("table") or [])
-    if len(table):
-        view = table.assign(**{"signal now": table["setup"].map({True: "yes", False: "-"}),
-                               "chosen": table["selected"].map({True: "◀ SELECTED", False: ""})})
-        view = view[["rank", "strategy", "signal now", "score", "edge_r", "confidence", "samples", "eligible", "chosen", "note"]]
+    view = leaderboard_frame(r.get("table") or [])
+    if len(view):
         st.dataframe(view, hide_index=True, width="stretch", height=min(760, 38 + 35 * len(view)))
     if r.get("errors"):
         st.caption("Strategies that errored on this bar: " + ", ".join(r["errors"]))

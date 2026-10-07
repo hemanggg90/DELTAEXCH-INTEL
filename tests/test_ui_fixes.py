@@ -156,3 +156,49 @@ def test_stopped_engines_are_not_reported_as_leftovers(env) -> None:
     a.stop()
     a._thread.join(timeout=15)
     assert other_engines_in_process(None) == []
+
+
+# ---- decisions saved by OLDER engine code must not crash the leaderboard ----------------------------------------------------------------
+OLD_ROW = {"strategy": "Supertrend tight / ATM", "setup": True, "score": 0.33, "edge_r": 0.19, "confidence": "HIGH", "samples": 30,
+           "eligible": True, "note": "eligible"}  # the format before the full leaderboard: no rank, no selected
+
+
+def test_leaderboard_frame_handles_the_old_and_new_record_formats() -> None:
+    from delta_intelligence.ui.ranker_view import LEADERBOARD_COLUMNS, leaderboard_frame
+
+    old = leaderboard_frame([OLD_ROW, {**OLD_ROW, "strategy": "Other", "note": "SELECTED"}])
+    assert list(old.columns) == LEADERBOARD_COLUMNS and list(old["rank"]) == [1, 2]
+    assert list(old["chosen"]) == ["", "◀ SELECTED"] and list(old["signal now"]) == ["yes", "yes"]  # derived from the old fields
+    new = leaderboard_frame([{**OLD_ROW, "rank": 1, "selected": True}, {**OLD_ROW, "strategy": "B", "rank": 2, "selected": False,
+                                                                       "setup": False}])
+    assert list(new["chosen"]) == ["◀ SELECTED", ""] and list(new["signal now"]) == ["yes", "-"]
+    for bad in ([], [{}], [{"strategy": "X"}]):  # empty, no strategy column, only a name: never an exception
+        out = leaderboard_frame(bad)
+        assert list(out.columns) == LEADERBOARD_COLUMNS
+    assert list(leaderboard_frame([{"strategy": "X"}])["strategy"]) == ["X"]
+
+
+@pytest.mark.parametrize("ranker", [
+    {"mode": "select", "selected": None, "reason": "No strategy clears minimum edge/confidence thresholds", "evidence": "e",
+     "table": [OLD_ROW], "n_candidates": 36, "n_with_setup": 1},  # exactly what the old engine saved
+    {"mode": "select", "selected": None, "reason": "r", "table": []},
+    {"mode": "shadow", "selected": "A", "reason": "r", "table": [{**OLD_ROW, "strategy": "A", "rank": 1, "selected": True}],
+     "leader": {"strategy": "A", "score": 0.3, "has_setup": True}},
+])
+def test_ranker_note_renders_old_and_new_decisions_without_error(ranker) -> None:
+    from streamlit.testing.v1 import AppTest
+
+    def app():
+        import streamlit as st
+        from types import SimpleNamespace
+
+        from delta_intelligence.ui.ranker_view import ranker_note
+
+        ranker_note(SimpleNamespace(ranking={"ranker": st.session_state["ranker"]}))
+        ranker_note(SimpleNamespace(ranking={"detail": "an old decision with no ranker at all"}))
+        ranker_note(None)
+
+    at = AppTest.from_function(app)
+    at.session_state["ranker"] = ranker
+    at.run()
+    assert not at.exception, at.exception
