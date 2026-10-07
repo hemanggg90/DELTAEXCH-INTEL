@@ -30,20 +30,27 @@ def iv_panel(asset: str) -> None:
 
 
 def ranker_note(decision) -> None:
-    """The ranker's verdict stored on a Decision row (`Decision.ranking['ranker']`), if the engine had a ranker."""
+    """The ranker's verdict and the FULL leaderboard stored on a Decision (`Decision.ranking['ranker']`): every strategy is
+    scored each bar, signalling or not; only a strategy with a signal right now can be traded."""
     r = ((decision.ranking or {}).get("ranker")) if decision is not None else None
     if not r:
         return
     mode = r.get("mode")
     if r.get("selected"):
-        st.success(f"Ranker ({mode}): selected **{r['selected']}**. {r.get('reason', '')}")
+        st.success(f"Ranker ({mode}): selected **{r['selected']}**, the best-ranked strategy with a signal. {r.get('reason', '')}")
     else:
         st.info(f"Ranker ({mode}): **NO TRADE**. {r.get('reason', '')}")
-    st.caption(f"{r.get('n_with_setup', 0)} of {r.get('n_candidates', 0)} strategies have a setup on this bar. "
-               f"{r.get('evidence', '')}")
+    lead = r.get("leader")
+    if lead:
+        st.caption(f"Overall leader: **{lead['strategy']}** (score {lead['score']}), "
+                   + ("it has a signal now." if lead["has_setup"] else "waiting for its signal."))
+    st.caption(f"{r.get('n_with_setup', 0)} of {r.get('n_candidates', 0)} strategies have a signal on this bar. {r.get('evidence', '')}")
     table = pd.DataFrame(r.get("table") or [])
     if len(table):
-        st.dataframe(table.drop(columns=["setup"], errors="ignore"), hide_index=True, width="stretch")
+        view = table.assign(**{"signal now": table["setup"].map({True: "yes", False: "-"}),
+                               "chosen": table["selected"].map({True: "◀ SELECTED", False: ""})})
+        view = view[["rank", "strategy", "signal now", "score", "edge_r", "confidence", "samples", "eligible", "chosen", "note"]]
+        st.dataframe(view, hide_index=True, width="stretch", height=min(760, 38 + 35 * len(view)))
     if r.get("errors"):
         st.caption("Strategies that errored on this bar: " + ", ".join(r["errors"]))
 

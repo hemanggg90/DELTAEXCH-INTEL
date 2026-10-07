@@ -142,11 +142,12 @@ Notes:
 ## 11. The live ranker and the IV percentile
 
 - **All 36 strategies are ranked every bar** (the 10 v3, the 14 older v2, the two Supertrend "tight" variants and the 10 new S1-S10
-  families). The ranker scores only the strategies that have a valid setup right now, using each strategy's history of closed
-  trades (`delta_intelligence/evidence/ranker_evidence.parquet`), and picks one or says **NO TRADE**. Its thresholds are unchanged:
-  it needs a shrunk edge of at least 0.05 R, MEDIUM confidence, stable time folds and a clear winner. With today's evidence
-  (modelled prices, no strategy accepted) that means **NO TRADE almost all the time**, so it trades far less than the two
-  always-on variants did.
+  families), whether or not they have a signal, and the dashboard shows the full leaderboard per underlying (Command Center and
+  Strategy Intelligence → Live ranker). Each strategy is scored from its history of closed trades
+  (`delta_intelligence/evidence/ranker_evidence.parquet`) in market conditions like the current ones. A strategy can only be traded
+  when it has a signal right now, so the engine trades **the best-ranked strategy that is signalling**, or says **NO TRADE**. The
+  thresholds are unchanged: a shrunk edge of at least 0.05 R, MEDIUM confidence, stable time folds and a clear winner. With today's
+  evidence (modelled prices, no strategy accepted) that means **NO TRADE almost all the time**.
 - `RANKER_MODE` in `.env`: `select` (default: the pick is the only strategy allowed to trade, **PAPER only**), `shadow` (ranked and
   shown; the two variants keep trading) or `off`. In LIVE mode `select` becomes `shadow` automatically. The pick still goes
   through the planner and the risk engine, which keep the last word.

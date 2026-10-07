@@ -1,13 +1,18 @@
 """
-The LIVE ranker: scores every candidate that has a valid setup on the latest closed bar and picks one, or NO TRADE.
+The LIVE ranker: scores EVERY strategy on the current market state, shows the full leaderboard, and picks the best-ranked
+strategy that is actually signalling, or NO TRADE.
 
 It reuses the research ranker unchanged (`research.ranking_core.assess_observations` + `ranking_engine.rank_and_select`), so
 whatever `ranking/evaluate_ranker.py` evaluates is exactly what runs here. Its EVIDENCE is the closed backtest trades of
 each strategy (net option R, with the six market features at entry) stored in `evidence/ranker_evidence.parquet`, built by
-`scripts/build_ranker_evidence.py`. Nothing is invented: a strategy without evidence is ineligible, a missing evidence file
-means NO TRADE, and a strategy with no current setup is simply not a candidate this bar.
+`scripts/build_ranker_evidence.py`.
 
-No ranker threshold is changed here (edge >= 0.05 R after shrinkage, MEDIUM confidence, stable folds, a clear winner).
+- **Leaderboard:** every candidate is scored every bar, with or without a signal. A strategy without evidence is shown as such
+  (never hidden, never given an invented score).
+- **Selection:** a strategy can only be traded when it has a valid setup now. `rank_and_select` runs over the ELIGIBLE strategies
+  that have a setup (same thresholds: shrunk edge >= 0.05 R, MEDIUM confidence, stable folds, a clear winner), so the traded
+  strategy is the best-ranked one that is signalling. The overall leader is reported too, with whether it is waiting for a signal.
+- A missing evidence file means NO TRADE. No ranker threshold is changed here.
 """
 from __future__ import annotations
 
@@ -27,8 +32,9 @@ EVIDENCE_COLUMNS = ["strategy_name", "asset", "entry_timestamp", "exit_timestamp
 @dataclass
 class LiveRanking:
     decision: RankingDecision
-    table: list[dict] = field(default_factory=list)  # one row per candidate (with or without a setup)
+    table: list[dict] = field(default_factory=list)  # the FULL leaderboard, best first
     evidence_note: str = ""
+    leader: dict | None = None  # the best-ranked eligible strategy overall (may be waiting for its signal)
 
     @property
     def selected(self) -> str | None:
@@ -37,6 +43,10 @@ class LiveRanking:
     @property
     def reason(self) -> str:
         return self.decision.reason
+
+
+def _num(x, nd: int = 4):
+    return None if x is None else round(float(x), nd)
 
 
 class LiveRanker:
@@ -84,32 +94,46 @@ class LiveRanker:
             obs = obs[obs["exit_timestamp"] <= pd.Timestamp(now)]
         return obs
 
-    def rank(self, asset: str, current_features: dict, with_setup: list[str], all_keys: list[str] | None = None,
-             data_quality: str = "OK", now: pd.Timestamp | None = None) -> LiveRanking:
-        """Score the strategies that have a setup now (`with_setup`) and select one or NO TRADE."""
-        scores: list[StrategyScore] = []
-        for key in with_setup:
+    def score_all(self, asset: str, current_features: dict, keys: list[str], now: pd.Timestamp | None = None) -> dict[str, StrategyScore]:
+        out: dict[str, StrategyScore] = {}
+        for key in dict.fromkeys(keys):
             obs = self.observations(key, asset, now)
             if not len(obs):
-                scores.append(StrategyScore(key, 0.0, None, None, "INSUFFICIENT_DATA", 0, None, False,
-                                            "no historical trades (no evidence) for this strategy on this underlying"))
-                continue
-            scores.append(assess_observations(key, obs, current_features).score)
+                out[key] = StrategyScore(key, 0.0, None, None, "INSUFFICIENT_DATA", 0, None, False,
+                                         "no historical trades (no evidence) for this strategy on this underlying")
+            else:
+                out[key] = assess_observations(key, obs, current_features).score
+        return out
+
+    def rank(self, asset: str, current_features: dict, with_setup: list[str], all_keys: list[str] | None = None,
+             data_quality: str = "OK", now: pd.Timestamp | None = None) -> LiveRanking:
+        """Score ALL strategies (`all_keys`) for the leaderboard; select among the eligible ones that have a setup now."""
+        keys = list(dict.fromkeys([*(all_keys or []), *with_setup]))
+        scores = self.score_all(asset, current_features, keys, now)
+        has = set(with_setup)
+        cand = [scores[k] for k in with_setup]
         if not with_setup:
             decision = RankingDecision([], None, True, "No strategy has a valid setup on the latest bar")
         elif not self.available:
-            decision = RankingDecision(scores, None, True, f"NO TRADE: {self.describe()}")
+            decision = RankingDecision(cand, None, True, f"NO TRADE: {self.describe()}")
         else:
-            decision = rank_and_select(scores, data_quality)
-        by = {s.strategy_name: s for s in scores}
+            decision = rank_and_select(cand, data_quality)
+        selected = None if decision.is_no_trade else decision.selected_strategy
+        ordered = sorted(scores.values(), key=lambda s: (s.eligible, s.score), reverse=True)
         table = []
-        for key in all_keys or with_setup:
-            s = by.get(key)
-            if s is None:
-                table.append({"strategy": key, "setup": False, "score": None, "edge_r": None, "confidence": None,
-                              "samples": None, "eligible": None, "note": "waiting for setup"})
+        for i, s in enumerate(ordered, 1):
+            if s.strategy_name == selected:
+                note = "SELECTED"
+            elif s.ineligibility_reason:
+                note = s.ineligibility_reason
+            elif s.strategy_name in has:
+                note = "eligible and signalling, but not chosen (" + decision.reason.split(":")[0][:80] + ")" if decision.is_no_trade \
+                    else "eligible and signalling, ranked below the selected strategy"
             else:
-                table.append({"strategy": key, "setup": True, "score": s.score, "edge_r": s.edge_mean if s.edge_mean is not None else s.expected_r,
-                              "confidence": s.confidence_label, "samples": s.sample_size, "eligible": s.eligible,
-                              "note": s.ineligibility_reason or ("SELECTED" if decision.selected_strategy == key and not decision.is_no_trade else "eligible")})
-        return LiveRanking(decision, table, self.describe())
+                note = "eligible, waiting for its signal"
+            table.append({"rank": i, "strategy": s.strategy_name, "setup": s.strategy_name in has, "score": _num(s.score),
+                          "edge_r": _num(s.edge_mean if s.edge_mean is not None else s.expected_r), "confidence": s.confidence_label,
+                          "samples": s.sample_size, "eligible": s.eligible, "selected": s.strategy_name == selected, "note": note})
+        top = next((r for r in table if r["eligible"]), None)
+        leader = None if top is None else {"strategy": top["strategy"], "score": top["score"], "has_setup": top["setup"]}
+        return LiveRanking(decision, table, self.describe(), leader)

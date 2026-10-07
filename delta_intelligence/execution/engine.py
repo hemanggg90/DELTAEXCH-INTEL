@@ -333,7 +333,7 @@ class TradingEngine:
         if mode != "off":
             setups, ranking, errors = self._rank(frame, u, last, quality, now)
             extra = {"mode": mode, "selected": ranking.selected, "reason": ranking.reason, "evidence": ranking.evidence_note,
-                     "table": [r for r in ranking.table if r["setup"]], "n_candidates": len(self.universe),
+                     "table": ranking.table, "leader": ranking.leader, "n_candidates": len(self.universe),
                      "n_with_setup": len(setups), "errors": errors[:5]}
             if mode == "select":
                 if ranking.selected is None:

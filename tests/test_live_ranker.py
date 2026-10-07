@@ -78,7 +78,9 @@ def test_no_strategy_with_a_setup_means_no_trade() -> None:
     r = LiveRanker(evidence({ATM: 0.4}))
     out = r.rank("BTC", CURRENT, [], [ATM, ITM])
     assert out.selected is None and "No strategy has a valid setup" in out.reason
-    assert all(row["setup"] is False and row["note"] == "waiting for setup" for row in out.table)
+    assert [row["strategy"] for row in out.table][0] == ATM and all(row["setup"] is False for row in out.table)
+    assert out.table[0]["eligible"] and "waiting for its signal" in out.table[0]["note"]  # ranked, just not signalling
+    assert out.leader == {"strategy": ATM, "score": out.table[0]["score"], "has_setup": False}
 
 
 def test_strong_validated_evidence_selects_and_a_clear_winner_beats_a_weak_rival() -> None:
@@ -285,3 +287,58 @@ def test_seed_and_database_snapshots_feed_the_live_history(tmp_path, monkeypatch
     assert info2["n_obs"] >= info["n_obs"] and any("recorded snapshots" in x for x in info2["sources"]) or info2["n_obs"] == info["n_obs"]
     assert make_iv_history_fn(SimpleNamespace(data_cache_dir=tmp_path, data_env="X"))("BTC") is not None
     db.reset_engine()
+
+
+# ---- the full leaderboard ------------------------------------------------------------------------------------------------------
+THIRD = "Some third strategy"
+
+
+def test_leaderboard_ranks_every_strategy_whether_or_not_it_is_signalling() -> None:
+    r = LiveRanker(evidence({ATM: 0.45, ITM: 0.1, THIRD: -0.2}))
+    out = r.rank("BTC", CURRENT, [ITM], [ATM, ITM, THIRD, "no evidence strategy"])
+    keys = [row["strategy"] for row in out.table]
+    assert sorted(keys) == sorted([ATM, ITM, THIRD, "no evidence strategy"])  # all four are on the leaderboard, none hidden
+    assert [row["rank"] for row in out.table] == [1, 2, 3, 4]
+    scores = [row["score"] for row in out.table if row["eligible"]]
+    assert scores == sorted(scores, reverse=True) and out.table[0]["strategy"] == ATM  # best first
+    rows = {row["strategy"]: row for row in out.table}
+    assert rows["no evidence strategy"]["eligible"] is False and "no evidence" in rows["no evidence strategy"]["note"]
+    assert rows[THIRD]["eligible"] is False and rows[ATM]["setup"] is False and rows[ITM]["setup"] is True
+
+
+def test_the_traded_strategy_is_the_best_ranked_one_that_is_signalling() -> None:
+    r = LiveRanker(evidence({ATM: 0.45, ITM: 0.1}))
+    out = r.rank("BTC", CURRENT, [ITM], [ATM, ITM])  # the overall leader (ATM) has no signal; ITM does
+    assert out.leader["strategy"] == ATM and out.leader["has_setup"] is False
+    if out.selected is not None:  # a signalling strategy may only be chosen if it is itself eligible and clear
+        assert out.selected == ITM
+    both = r.rank("BTC", CURRENT, [ATM, ITM], [ATM, ITM])
+    assert both.leader["strategy"] == ATM and both.leader["has_setup"] is True
+    assert sum(row["selected"] for row in both.table) == (1 if both.selected else 0)
+
+
+def test_a_strategy_without_a_signal_is_never_selected_however_well_it_ranks() -> None:
+    r = LiveRanker(evidence({ATM: 0.6, THIRD: -0.3}))
+    out = r.rank("BTC", CURRENT, [THIRD], [ATM, THIRD])
+    assert out.selected is None and not any(row["selected"] for row in out.table)
+    assert out.table[0]["strategy"] == ATM  # ranked first, but cannot trade without a signal
+
+
+def test_engine_stores_the_whole_leaderboard_and_the_leader(env) -> None:
+    s, box, broker = env
+    uni = tuple(BY_KEY[k] for k in (ATM, ITM)) + tuple(c for c in UNIVERSE if c.source == "lab")[:3]
+    eng = TradingEngine(broker, lambda: box["chain"], FakeDM(), s, clock=lambda: NOW, interval_sec=0.05,
+                        frame_builder=lambda perp, now: (ranker_frame(), "OK"), ranker=LiveRanker(evidence({ATM: 0.45, ITM: -0.2})),
+                        universe=uni, ranker_mode="select")
+    eng.run_cycle()
+    with db.get_session() as ses:
+        r = ses.query(Decision).one().ranking["ranker"]
+    assert len(r["table"]) == len(uni) == 5  # every candidate, including those with no setup and no evidence
+    assert {row["strategy"] for row in r["table"]} == {c.key for c in uni}
+    assert r["leader"]["strategy"] == ATM and r["n_candidates"] == 5
+    assert any(row["note"].startswith("no historical trades") for row in r["table"])
+
+
+def test_default_mode_is_select(monkeypatch) -> None:
+    monkeypatch.delenv("RANKER_MODE", raising=False)
+    assert ranker_mode() == "select"
