@@ -57,6 +57,24 @@ def owner_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}"
 
 
+def code_version() -> str:
+    """Short git commit of the running code (read from .git, no subprocess), or 'unknown' on a deploy without .git."""
+    from pathlib import Path
+
+    try:
+        git = Path(__file__).resolve().parents[2] / ".git"
+        head = (git / "HEAD").read_text().strip()
+        if head.startswith("ref:"):
+            ref = git / head.split(" ", 1)[1]
+            sha = ref.read_text().strip() if ref.exists() else next(
+                (ln.split()[0] for ln in (git / "packed-refs").read_text().splitlines() if ln.endswith(head.split(" ", 1)[1])), "")
+        else:
+            sha = head
+        return sha[:7] or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def other_engine_alive(now: dt.datetime) -> dict | None:
     """The registered engine owner if it is NOT this process and its heartbeat is fresh; otherwise None. PIDs are
     only recorded, never signalled (on Windows os.kill would terminate the process)."""
@@ -122,7 +140,9 @@ class TradingEngine:
             if other is not None:
                 raise RuntimeError(f"another engine is already running ({other['id']}, heartbeat "
                                    f"{other['heartbeat_age_sec']:.0f}s ago). Two engines would double-trade.")
-            db.set_state(OWNER_KEY, {"id": owner_id(), "started_at": self.clock().isoformat()})
+            db.set_state(OWNER_KEY, {"id": owner_id(), "started_at": self.clock().isoformat(), "mode": self.broker.mode,
+                                     "ranker_mode": self.effective_ranker_mode(), "version": code_version(),
+                                     "ranker": None if self.ranker is None else self.ranker.describe()})
             self._stop.clear()
             self.started_at = self.clock()
             try:

@@ -150,13 +150,28 @@ def kpi_row(items: Sequence[dict]) -> None:
     and delta strings must not start with '-' (Streamlit would flip the colour)."""
     if not items:
         return
-    cols = st.columns(len(items))
-    for col, it in zip(cols, items):
-        t = it.get("tone", "neutral")
-        delta = it.get("delta")
-        col.metric(it["label"], it.get("value", MISSING), delta=delta,
-                   delta_color={"good": "normal", "critical": "inverse"}.get(t, "off"), delta_arrow="off",
-                   help=it.get("help"), border=True, chart_data=it.get("spark"), chart_type="area")
+    # Streamlit truncates a metric's label and value with "..." when its column is narrow, so a long row is split into rows of
+    # at most KPI_MAX_PER_ROW tiles of equal width (7 tiles -> 4 + 3, 5 -> 3 + 2). Rows of 4 or fewer are unchanged.
+    for rows in kpi_layout(len(items)):
+        cols = st.columns(rows[1])
+        for col, it in zip(cols, items[rows[0]:rows[0] + rows[1]]):
+            t = it.get("tone", "neutral")
+            delta = it.get("delta")
+            col.metric(it["label"], it.get("value", MISSING), delta=delta,
+                       delta_color={"good": "normal", "critical": "inverse"}.get(t, "off"), delta_arrow="off",
+                       help=it.get("help"), border=True, chart_data=it.get("spark"), chart_type="area")
+
+
+KPI_MAX_PER_ROW = 4
+
+
+def kpi_layout(n: int) -> list[tuple[int, int]]:
+    """[(first_item_index, columns_in_this_row), ...]: `n` tiles in the fewest rows of at most KPI_MAX_PER_ROW, evenly sized."""
+    if n <= 0:
+        return []
+    n_rows = -(-n // KPI_MAX_PER_ROW)
+    per_row = -(-n // n_rows)
+    return [(start, per_row) for start in range(0, n, per_row)]
 
 
 def entity_card(title: str, tags: Iterable[tuple[str, str]] = (), key_value: str | None = None,

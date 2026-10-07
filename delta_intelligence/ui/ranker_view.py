@@ -55,7 +55,45 @@ def ranker_note(decision) -> None:
         st.caption("Strategies that errored on this bar: " + ", ".join(r["errors"]))
 
 
-def engine_ranker_line(eng) -> None:
+def external_engine_message(owner: dict, age_sec: float | None, app_ranker_mode: str, my_version: str) -> tuple[str, str]:
+    """(tone, text) for 'an engine is running in another process': WHO it is and what to do. Records written by engines that
+    predate these fields simply lack them, which is itself reported (an older engine)."""
+    from delta_intelligence.ui.format import duration
+    from delta_intelligence.utils.timeutil import fmt_ist
+
+    hb = "" if age_sec is None else f", heartbeat {duration(age_sec)} ago"
+    if not owner or not owner.get("id"):
+        return "info", (f"An engine is running in another process{hb}, but it left no details. Start is disabled here: two engines "
+                        "would double-trade. Use the kill switch (Risk Control) to block new trades, or stop that process.")
+    started = ""
+    if owner.get("started_at"):
+        try:
+            import pandas as pd
+
+            started = f", started {fmt_ist(pd.Timestamp(owner['started_at']).tz_localize('UTC') if pd.Timestamp(owner['started_at']).tzinfo is None else pd.Timestamp(owner['started_at']), '%d %b %H:%M IST')}"
+        except Exception:
+            started = ""
+    if "version" not in owner:
+        detail = "an OLDER engine (it recorded no mode, ranker or version), so it does not use the ranker leaderboard"
+        tone = "warning"
+    else:
+        ranker = owner.get("ranker_mode") or "off"
+        detail = f"mode {owner.get('mode', '?')}, ranker `{ranker}`, code `{owner.get('version', 'unknown')}`"
+        tone = "info"
+        if ranker in ("off", "shadow") and app_ranker_mode == "select":
+            tone, detail = "warning", detail + ". It is NOT letting the ranker choose trades"
+        if owner.get("version") not in (None, "unknown") and my_version != "unknown" and owner["version"] != my_version:
+            tone, detail = "warning", detail + f". This app runs code `{my_version}`: that engine runs different code"
+    return tone, (f"An engine on `{owner['id']}`{started}{hb} is running: {detail}. Start is disabled here: two engines would "
+                  "double-trade. If it is on your PC, stop it there (Ctrl+C in its terminal) or restart it with the latest code; "
+                  "otherwise use the kill switch (Risk Control) to block new trades.")
+
+
+def engine_ranker_line(eng, external_owner: dict | None = None) -> None:
+    if external_owner is not None:
+        mode = external_owner.get("ranker_mode") if "version" in external_owner else None
+        st.caption("Another engine is running, so the lines here describe THIS app's configuration, not that engine. "
+                   + (f"That engine runs ranker mode `{mode}`." if mode else "That engine is older or left no ranker details."))
     if eng is None:
         return
     stt = eng.status()

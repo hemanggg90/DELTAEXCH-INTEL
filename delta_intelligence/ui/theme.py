@@ -57,6 +57,9 @@ CSS = f"""
 :root{{{_vars()}}}
 .block-container{{padding-top:2.2rem;padding-bottom:3rem;max-width:1500px}}
 h1{{font-size:1.7rem!important;font-weight:650!important;letter-spacing:-0.01em}}
+[data-testid="stMetricLabel"] p,[data-testid="stMetricLabel"] div{{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;line-height:1.2}}
+[data-testid="stMetricValue"],[data-testid="stMetricValue"] div{{font-size:clamp(1.15rem,1.7vw,1.7rem)!important;overflow:visible!important;text-overflow:clip!important}}
+[data-testid="stMetricDelta"],[data-testid="stMetricDelta"] div{{white-space:normal!important;overflow:visible!important;text-overflow:clip!important}}
 h2{{font-size:1.2rem!important;font-weight:620!important}}
 h3{{font-size:1.02rem!important;font-weight:620!important;color:var(--app-text)}}
 [data-testid="stMetric"]{{background:var(--app-card);border-radius:10px}}

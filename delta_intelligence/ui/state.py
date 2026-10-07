@@ -183,6 +183,14 @@ def engine_heartbeat() -> tuple[dt.datetime | None, float | None]:
     return t, (now_utc() - t).total_seconds()
 
 
+def external_engine_owner() -> dict:
+    """The registered engine owner record (host:pid, started_at, and on newer engines mode / ranker_mode / version)."""
+    from delta_intelligence.execution.engine import OWNER_KEY
+
+    ensure_db()
+    return db.get_state(OWNER_KEY, {}) or {}
+
+
 def external_engine_running() -> bool:
     """True when some engine (headless script or another app process) is heartbeating, and it isn't ours."""
     _, age = engine_heartbeat()

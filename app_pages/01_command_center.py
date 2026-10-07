@@ -16,7 +16,8 @@ from delta_intelligence.ui.amounts import used_today
 from delta_intelligence.ui.components import (DECISION_TONE, can_control, control_note, empty_state, entity_card,
                                               kpi_row, meter, notice, page_setup, status_label, table)
 from delta_intelligence.ui.format import duration, inr, money, num, pnl, pnl_inr, tone, usd
-from delta_intelligence.ui.ranker_view import engine_ranker_line, iv_panel, ranker_note
+from delta_intelligence.ui.ranker_view import (engine_ranker_line, external_engine_message, iv_panel,
+                                                ranker_note)
 from delta_intelligence.utils.timeutil import fmt_ist, now_utc
 
 page_setup("Command Center", "Research software, not financial advice. The backtests found no proven edge (see "
@@ -73,9 +74,10 @@ with left:
                 eng.stop()
                 st.rerun()
         elif external:
-            notice("info", f"An engine is running in another process (heartbeat {duration(age)} ago), e.g. "
-                           "`scripts/run_engine.py`. Start is disabled here: two engines would double-trade. Use the "
-                           "kill switch (Risk Control) to block new trades, or stop that process.")
+            from delta_intelligence.execution.engine import code_version
+            from delta_intelligence.execution.ranker_setup import ranker_mode
+
+            notice(*external_engine_message(state.external_engine_owner(), age, ranker_mode(), code_version()))
         else:
             c = st.columns([4, 1], vertical_alignment="center")
             with c[0]:
@@ -98,7 +100,7 @@ with right:
         st.caption("The two Supertrend variants (" + ", ".join(v.key for v in ACTIVE_VARIANTS) + ") are candidates like the "
                    "rest (weak evidence). Evidence is MODELED; the ranker says NO TRADE unless a strategy shows a stable, "
                    "statistically supported edge.")
-        engine_ranker_line(eng)
+        engine_ranker_line(eng, state.external_engine_owner() if external else None)
 
 st.subheader("Latest decision per underlying")
 with db.get_session() as ses:
