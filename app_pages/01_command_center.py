@@ -10,11 +10,13 @@ from delta_intelligence.database.models import Decision, from_db_time
 from delta_intelligence.execution.account import AccountTracker
 from delta_intelligence.execution.engine import kill_switch_on
 from delta_intelligence.strategies.active import ACTIVE_VARIANTS
+from delta_intelligence.strategies.universe import UNIVERSE
 from delta_intelligence.ui import state
 from delta_intelligence.ui.amounts import used_today
 from delta_intelligence.ui.components import (DECISION_TONE, can_control, control_note, empty_state, entity_card,
                                               kpi_row, meter, notice, page_setup, status_label, table)
 from delta_intelligence.ui.format import duration, inr, money, num, pnl, pnl_inr, tone, usd
+from delta_intelligence.ui.ranker_view import engine_ranker_line, iv_panel, ranker_note
 from delta_intelligence.utils.timeutil import fmt_ist, now_utc
 
 page_setup("Command Center", "Research software, not financial advice. The backtests found no proven edge (see "
@@ -90,11 +92,13 @@ with left:
                   f"heartbeat {duration(age)} ago (stale after 2m)")
         control_note()
 with right:
-    st.subheader("Active strategies (paper)")
+    st.subheader("Strategies (paper)")
     with st.container(border=True):
-        for v in ACTIVE_VARIANTS:
-            st.markdown(f"**{v.key}**")
-        st.caption("Chosen in the strategy search; weak evidence (Research Reports → STRATEGY_SEARCH).")
+        st.markdown(f"The live ranker scores all **{len(UNIVERSE)}** strategies every bar and may pick one, or NO TRADE.")
+        st.caption("The two Supertrend variants (" + ", ".join(v.key for v in ACTIVE_VARIANTS) + ") are candidates like the "
+                   "rest (weak evidence). Evidence is MODELED; the ranker says NO TRADE unless a strategy shows a stable, "
+                   "statistically supported edge.")
+        engine_ranker_line(eng)
 
 st.subheader("Latest decision per underlying")
 with db.get_session() as ses:
@@ -114,6 +118,14 @@ for i, (u, d) in enumerate(latest.items()):
                     cells=[("IV percentile", num((d.ranking or {}).get("iv_percentile"), 0))]
                     + [(p.split(":")[0][:28], p.split(":", 1)[1].strip()) if ":" in p else ("note", p)
                        for p in detail.split("; ") if p][:8])
+
+for u, d in latest.items():
+    if (d.ranking or {}).get("ranker"):
+        with st.expander(f"Ranker verdict: {u}"):
+            ranker_note(d)
+with st.expander("IV percentile (live ATM IV and where its history comes from)"):
+    for a in state.assets():
+        iv_panel(a)
 
 st.subheader("Decision history")
 hist = pd.DataFrame([{"time (IST)": fmt_ist(from_db_time(d.bar_time), "%d %b %H:%M"), "underlying": d.underlying,

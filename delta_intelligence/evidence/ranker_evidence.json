@@ -1,0 +1,154 @@
+{
+  "generated_at": "2026-10-07T05:29:13.695767+00:00",
+  "since": "2025-12-01",
+  "assets": [
+    "BTC",
+    "ETH",
+    "XAUT"
+  ],
+  "rows": 20246,
+  "strategies": 35,
+  "pricing": "MODELED (MODEL_ONLY backtest)",
+  "per_strategy": {
+    "Asia Range Sweep": {
+      "n": 51,
+      "net_r": 0.0981
+    },
+    "BOS + Order Block Retest": {
+      "n": 217,
+      "net_r": -0.1005
+    },
+    "Bollinger Band Mean Reversion (v2)": {
+      "n": 171,
+      "net_r": -0.1183
+    },
+    "CPR Breakout (v2)": {
+      "n": 37,
+      "net_r": -0.0508
+    },
+    "Camarilla Pivot Reversal (v2)": {
+      "n": 3643,
+      "net_r": -0.0978
+    },
+    "Daily Momentum Swing": {
+      "n": 37,
+      "net_r": -0.2534
+    },
+    "Donchian Channel Breakout (v2)": {
+      "n": 1934,
+      "net_r": -0.096
+    },
+    "EMA 50/200 Crossover (v2)": {
+      "n": 782,
+      "net_r": -0.1373
+    },
+    "FVG Retrace with HTF Bias": {
+      "n": 491,
+      "net_r": -0.0578
+    },
+    "Funding Extreme Contrarian (v2)": {
+      "n": 7,
+      "net_r": -0.1345
+    },
+    "Inside Bar Breakout (v2)": {
+      "n": 316,
+      "net_r": 0.0062
+    },
+    "Killzone Breakout": {
+      "n": 532,
+      "net_r": -0.0332
+    },
+    "Liquidation Flush Reversal": {
+      "n": 243,
+      "net_r": -0.1037
+    },
+    "Liquidity Sweep + MSS": {
+      "n": 808,
+      "net_r": -0.0944
+    },
+    "MACD Signal Crossover (v2)": {
+      "n": 246,
+      "net_r": -0.0293
+    },
+    "Momentum (v2)": {
+      "n": 232,
+      "net_r": 0.0408
+    },
+    "OI Buildup Confirmation (v2)": {
+      "n": 419,
+      "net_r": -0.0878
+    },
+    "Opening Range Breakout (v2)": {
+      "n": 5,
+      "net_r": 0.2634
+    },
+    "RSI(2) Mean Reversion (v2)": {
+      "n": 28,
+      "net_r": 0.0082
+    },
+    "S1 Volatility Breakout + Trend": {
+      "n": 236,
+      "net_r": -0.0672
+    },
+    "S10 Mean-Reversion Extreme": {
+      "n": 1127,
+      "net_r": -0.109
+    },
+    "S2 Donchian Breakout": {
+      "n": 1330,
+      "net_r": -0.0529
+    },
+    "S3 VWAP + Momentum Breakout": {
+      "n": 691,
+      "net_r": -0.0958
+    },
+    "S4 Liquidity Sweep + Market Structure Shift": {
+      "n": 735,
+      "net_r": -0.1201
+    },
+    "S5 Funding/OI + Price Divergence": {
+      "n": 46,
+      "net_r": -0.0159
+    },
+    "S6 Long Straddle Volatility Expansion": {
+      "n": 686,
+      "net_r": -0.0857
+    },
+    "S7 Opening Range Breakout": {
+      "n": 304,
+      "net_r": -0.1103
+    },
+    "S8 EMA Trend + ADX": {
+      "n": 1597,
+      "net_r": -0.1303
+    },
+    "S9 Supertrend + Volatility Filter": {
+      "n": 29,
+      "net_r": 0.2091
+    },
+    "Squeeze Breakout": {
+      "n": 5,
+      "net_r": -0.1828
+    },
+    "Supertrend Trend Following (v2)": {
+      "n": 591,
+      "net_r": -0.0679
+    },
+    "Supertrend tight / 1-ITM": {
+      "n": 180,
+      "net_r": 0.0816
+    },
+    "Supertrend tight / ATM": {
+      "n": 123,
+      "net_r": 0.1425
+    },
+    "Trend Pullback Continuation": {
+      "n": 230,
+      "net_r": -0.0764
+    },
+    "VWAP Mean Reversion (v2)": {
+      "n": 2137,
+      "net_r": -0.1001
+    }
+  }
+}

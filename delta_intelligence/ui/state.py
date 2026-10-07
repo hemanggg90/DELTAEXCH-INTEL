@@ -90,7 +90,9 @@ def _paper_engine():
     chain_fn = lambda: fetch_chain(public(), assets(), max_age=15)  # noqa: E731
     broker = PaperBroker(chain_fn, s)
     feed = TickerFeed(s.ws_url(private=False), list(get_watchlist()))
-    return TradingEngine(broker, chain_fn, data_manager(), s, feed=feed, iv_history=iv_history())
+    from delta_intelligence.execution.ranker_setup import engine_kwargs
+
+    return TradingEngine(broker, chain_fn, data_manager(), s, feed=feed, iv_history=iv_history(), **engine_kwargs(s))
 
 
 @st.cache_resource(show_spinner=False)
@@ -126,7 +128,10 @@ def build_live_engine():
     chain_fn = lambda: fetch_chain(public(), assets(), max_age=15)  # noqa: E731
     broker = build_live_broker(chain_fn, s)
     feed = TickerFeed(s.ws_url(private=False), list(get_watchlist()))
-    box["engine"] = TradingEngine(broker, chain_fn, data_manager(), s, feed=feed, iv_history=iv_history())
+    from delta_intelligence.execution.ranker_setup import engine_kwargs
+
+    box["engine"] = TradingEngine(broker, chain_fn, data_manager(), s, feed=feed, iv_history=iv_history(),
+                                   **engine_kwargs(s))  # LIVE: the ranker can only watch (select -> shadow)
     return box["engine"]
 
 
@@ -144,17 +149,29 @@ def broker():
     return eng.broker if eng is not None else paper_broker()
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def iv_history() -> dict:
+    """asset -> ATM IV history from every REAL source (local parquet, committed seed, the recorder's own snapshots)."""
+    from delta_intelligence.options import iv_live
+
     s = get_settings()
-    out = {}
     root = s.data_cache_dir / "options" / s.data_env.lower() / "iv_obs"
+    out = {}
     for u in UNDERLYINGS.values():
-        p = root / f"{u.asset}_atm_hourly.parquet"
-        if p.exists():
-            h = pd.read_parquet(p).dropna(subset=["atm_iv_6_30h"])
-            out[u.asset] = pd.Series(h["atm_iv_6_30h"].to_numpy(), index=pd.to_datetime(h["available_at"], utc=True))
+        series, _ = iv_live.merged_history(u.asset, root)
+        if len(series):
+            out[u.asset] = series
     return out
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def iv_sources() -> dict:
+    """asset -> {n_obs, sources} for the 'where does the IV percentile come from' captions."""
+    from delta_intelligence.options import iv_live
+
+    s = get_settings()
+    root = s.data_cache_dir / "options" / s.data_env.lower() / "iv_obs"
+    return {u.asset: iv_live.merged_history(u.asset, root)[1] for u in UNDERLYINGS.values()}
 
 
 def engine_heartbeat() -> tuple[dt.datetime | None, float | None]:

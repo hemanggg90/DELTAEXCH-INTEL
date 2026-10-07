@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -214,3 +214,21 @@ class ChainSnapshot(Base):
     delta = Column(Float)
     open_interest = Column(Float)
     volume = Column(Float)
+    # ---- Phase 2 additions (all nullable; a missing field stays NULL, never filled in) ------------------------------
+    quote_ts_us = Column(BigInteger)  # the exchange's own ticker timestamp (microseconds); detects stale quotes
+    dte_days = Column(Float)  # (expiry - taken_at) in days, computed at record time from the two stored timestamps
+    gamma = Column(Float)
+    theta = Column(Float)
+    vega = Column(Float)
+    rho = Column(Float)
+    bid_iv = Column(Float)
+    ask_iv = Column(Float)
+    turnover_usd = Column(Float)
+    oi_value_usd = Column(Float)
+    tick_size = Column(Float)
+    contract_value = Column(Float)
+    product_id = Column(Integer)
+    trading_status = Column(String(24))
+    source = Column(String(16), default="REAL_RECORDED")  # REAL_RECORDED. Modelled prices are never written here.
+    extra = Column(Text)  # JSON of other scalar fields the API exposed that have no column (robust to API changes)
+    __table_args__ = (Index("ix_chain_underlying_symbol_taken", "underlying", "symbol", "taken_at"),)

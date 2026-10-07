@@ -17,3 +17,9 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+
+# Research run caches and smoke outputs (regenerable; the reports and results.json are kept)
+research_lab/reports/*.pkl
+research_lab/reports/*.log
+research_lab/reports/phase2_smoke*/
+research_lab/reports/phase2/trades_*/

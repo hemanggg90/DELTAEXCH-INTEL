@@ -10,6 +10,7 @@ from delta_intelligence.market_state.market_state_engine import build_current_st
 from delta_intelligence.ui import charts
 from delta_intelligence.ui.components import empty_state, kpi_row, page_setup, table
 from delta_intelligence.ui.format import num, text
+from delta_intelligence.ui.ranker_view import iv_panel
 from delta_intelligence.ui.research import features
 from delta_intelligence.utils.timeutil import fmt_ist
 
@@ -37,6 +38,8 @@ kpi_row([
     {"label": "Regime confidence", "value": f"{state_.regime_confidence:.2f}",
      "help": "Max softmax probability; 0.10 = no information."},
 ])
+st.subheader("Implied volatility")
+iv_panel(UNDERLYINGS[perp].asset)
 c1, c2 = st.columns([2, 3])
 with c1, st.container(border=True):
     charts.show(charts.hbar(pd.Series(state_.regime_probabilities), "Regime probabilities"))

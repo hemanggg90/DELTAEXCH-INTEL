@@ -23,6 +23,9 @@ edge right now, and is there a valid setup? If not, do nothing.* **NO TRADE is a
   - the risk engine.
 
   Live sells also go with `reduce_only`. Max loss = premium paid + fees.
+- **The live ranker** (`ranking/live_ranker.py`, `RANKER_MODE`) ranks every strategy in `strategies/universe.py` and may choose the
+  PAPER trade (`select`). In LIVE it only watches (`shadow`): letting it pick real trades needs a separate, explicit decision.
+  The risk engine still has the last word on every pick. Missing evidence means NO TRADE, never an invented score.
 - **Exits** are managed by the engine: underlying invalidation, premium stop (−35%), strategy time stop, forced exit
   before the expiry guard (2 h).
 - **Strategy acceptance:** ≥ 200 trades, positive out-of-sample net R, stable under ±20% parameter changes, works on
@@ -80,6 +83,9 @@ python scripts/check_delta.py   # connectivity: time sync, auth, IP whitelist (r
 python scripts/fetch_candles.py BTCUSD ETHUSD .DEXBTUSD .DEETHUSD --days 60   # fill the Parquet cache (public data)
 python scripts/fetch_candles.py BTCUSD ETHUSD --days 68 --series FUNDING OI --series-timeframe 1h
 python scripts/regime_report.py --days 60   # features + regimes on real data, with a no-look-ahead re-check
-python scripts/run_engine.py   # 24x7 engine (active variants in strategies/active.py); PAPER by default, LIVE only
+python scripts/build_ranker_evidence.py   # rebuild the live ranker's evidence (all strategies; commit the parquet)
+python scripts/build_iv_seed.py           # refresh the committed IV seed for deployed copies
+python scripts/record_chain.py            # record REAL option quotes without the engine (public data only)
+python scripts/run_engine.py   # 24x7 engine (live ranker per RANKER_MODE); PAPER by default, LIVE only
                                # behind the double gate + startup check (P7); PC must not sleep
 ```

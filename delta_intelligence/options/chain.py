@@ -54,6 +54,7 @@ class OptionQuote:
     timestamp_us: int | None
     volume: float | None = None  # 24h traded contracts
     tick_size: float | None = None
+    raw: dict | None = None  # the ticker as received (the chain recorder normalises every exposed field from it)
 
     @property
     def mid(self) -> float | None:
@@ -73,7 +74,7 @@ def parse_ticker(t: dict) -> OptionQuote | None:
         mark=_f(t.get("mark_price")), mark_iv=_f(q.get("mark_iv")), open_interest=_f(t.get("oi_contracts") or t.get("oi")),
         bid_size=_f(q.get("bid_size")), ask_size=_f(q.get("ask_size")), delta=_f(g.get("delta")), spot=_f(g.get("spot")),
         product_id=t.get("product_id"), contract_value=_f(t.get("contract_value")), timestamp_us=t.get("timestamp"),
-        volume=_f(t.get("volume")), tick_size=_f(t.get("tick_size")))
+        volume=_f(t.get("volume")), tick_size=_f(t.get("tick_size")), raw=t)
 
 
 class OptionChain:

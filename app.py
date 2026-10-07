@@ -38,6 +38,7 @@ PAGES = {
         st.Page(P + "06_regime_analysis.py", title="Regime Analysis", icon=":material/cyclone:"),
         st.Page(P + "07_historical_analogues.py", title="Historical Analogues", icon=":material/manage_search:"),
         st.Page(P + "11_research_reports.py", title="Research Reports", icon=":material/description:"),
+        st.Page(P + "14_option_data.py", title="Option Data & Selection", icon=":material/dataset:"),
     ],
     "System": [st.Page(P + "12_system_health.py", title="System Logs & Health", icon=":material/health_and_safety:")],
 }

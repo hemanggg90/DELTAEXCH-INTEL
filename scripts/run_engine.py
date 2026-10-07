@@ -63,14 +63,19 @@ def build_engine():
     else:
         broker = PaperBroker(chain_fn, s)
     feed = TickerFeed(s.ws_url(private=False), list(get_watchlist()))
+    from delta_intelligence.execution.ranker_setup import engine_kwargs
+
     return TradingEngine(broker, chain_fn, DataManager.from_settings(s), s,
-                         feed=feed, iv_history=iv_history(s))
+                         feed=feed, iv_history=iv_history(s), **engine_kwargs(s))
 
 
 def main() -> int:
     eng = build_engine()
     eng.start()
-    print(f"engine started {fmt_ist(now_utc())} - {eng.broker.mode} - variants: {', '.join(v.key for v in eng.variants)}", flush=True)
+    print(f"engine started {fmt_ist(now_utc())} - {eng.broker.mode} - ranker: {eng.effective_ranker_mode()} - "
+          f"variants: {', '.join(v.key for v in eng.variants)}", flush=True)
+    if eng.ranker is not None:
+        print(f"ranker {eng.ranker.describe()}", flush=True)
     try:
         while True:
             time.sleep(300)

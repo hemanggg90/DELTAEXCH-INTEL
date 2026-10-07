@@ -82,7 +82,8 @@ class TradingEngine:
     def __init__(self, broker, chain_fn: Callable, data_manager, settings: Settings | None = None,
                  feed=None, iv_history: dict | None = None, clock: Callable[[], dt.datetime] = now_utc,
                  interval_sec: float = 30.0, record_every_sec: float = 300.0, variants=ACTIVE_VARIANTS,
-                 frame_builder: Callable | None = None):
+                 frame_builder: Callable | None = None, ranker=None, universe=None, ranker_mode: str = "off",
+                 iv_history_fn: Callable | None = None):
         self.broker = broker
         self.chain_fn = chain_fn
         self.dm = data_manager
@@ -93,6 +94,11 @@ class TradingEngine:
         self.interval = interval_sec
         self.record_every = record_every_sec
         self.variants = variants
+        # Live ranker (optional). `select`: the ranked winner is the ONLY strategy that may trade (PAPER mode only);
+        # `shadow`: the ranking is computed and shown but the engine trades `variants` as before; `off`: no ranker.
+        self.ranker, self.universe = ranker, tuple(universe or ())
+        self.ranker_mode = ranker_mode if ranker is not None and ranker_mode in ("select", "shadow") else "off"
+        self.iv_history_fn = iv_history_fn
         self.frame_builder = frame_builder or self._default_frame
         self.tracker = AccountTracker(self.settings)
         self._lock = threading.RLock()
@@ -149,7 +155,8 @@ class TradingEngine:
                 "cycle_errors": self.cycle_errors, "last_error": self.last_error,
                 "kill_switch": kill_switch_on(), "ws_status": getattr(self.feed, "status", "off"),
                 "last_decisions": dict(self.last_decisions), "recovery": self.recovery_summary,
-                "variants": [v.key for v in self.variants]}
+                "variants": [v.key for v in self.variants], "ranker_mode": self.effective_ranker_mode(),
+                "ranker": None if self.ranker is None else self.ranker.describe()}
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -238,14 +245,65 @@ class TradingEngine:
             return
         self.broker.close_position(ex.position_id, ex.reason)
 
+    def effective_ranker_mode(self) -> str:
+        """`select` is honoured ONLY for a PAPER broker. In LIVE the ranker can only watch: letting it pick real trades is a
+        separate decision (see CLAUDE.md)."""
+        if self.ranker_mode == "select" and getattr(self.broker, "mode", "PAPER") != "PAPER":
+            return "shadow"
+        return self.ranker_mode
+
     def _default_frame(self, perp: str, now: dt.datetime):
         from delta_intelligence.features.feature_engine import compute_features
         from delta_intelligence.features.inputs import load_feature_inputs
-        from delta_intelligence.strategies.context import build_strategy_frame
+        from delta_intelligence.strategies.universe import build_universe_frame
 
         inp = load_feature_inputs(self.dm, perp, "5m", now - dt.timedelta(days=LOOKBACK_DAYS), now)
         feats = compute_features(inp.ohlcv, "5m", inp.aux)
-        return build_strategy_frame(inp.ohlcv, feats), inp.quality_status
+        return build_universe_frame(inp.ohlcv, feats), inp.quality_status
+
+    def _iv_series(self, asset: str) -> pd.Series:
+        if self.iv_history_fn is not None:
+            try:
+                return self.iv_history_fn(asset)
+            except Exception as exc:  # an IV-history problem must never stop trading decisions: the percentile is just None
+                log_event("engine", f"IV history unavailable for {asset}: {exc}", level="WARNING")
+        return self.iv_history.get(asset, pd.Series(dtype=float))
+
+    def _attempt(self, key, strat, moneyness, setup, u, chain, index_spot, last, ivp, quality, did, held, kill_switch,
+                 now) -> str:
+        """Plan -> risk engine -> broker for ONE strategy's setup. Returns a status line. The logic is unchanged and shared
+        by the always-on variants and the ranker's choice: the risk engine still has the last word."""
+        if (key, u.asset) in held:
+            return f"{key}: setup {setup.direction} ignored (already holding a {u.asset} position)"
+        snap = self.broker.account_snapshot()
+        acct = self.tracker.account_state(snap, now, self.broker.is_connected(), kill_switch, self.broker.mode)
+        res = plan_trade(strat, moneyness, setup, u, chain, index_spot, float(last["close"]), now,
+                         self.settings, snap, relative_volume=last.get("relative_volume"), iv_percentile=ivp,
+                         data_quality=quality)
+        if not res.ok:
+            return f"{key}: setup {setup.direction}, not tradable ({res.reason})"
+        decision = evaluate_trade(acct, res.proposed)
+        if not decision.approved:
+            return f"{key}: VETO ({decision.reason})"
+        res.plan.decision_id, res.plan.risk_decision_id = did, decision.decision_id
+        opened = self.broker.open_structure(res.plan)
+        return f"{key}: {'OPENED ' + opened.position_id if opened.ok else 'fill failed: ' + opened.reason}"
+
+    def _rank(self, frame, u, last, quality, now):
+        """Setups of every universe candidate on the latest bar, then the ranker's verdict."""
+        setups, errors = {}, []
+        for c in self.universe:
+            try:
+                strat = c.build()
+                st = strat.setup_now(frame)
+            except Exception as exc:  # one broken strategy must not blind the rest
+                errors.append(f"{c.key}: {type(exc).__name__}")
+                continue
+            if st is not None:
+                setups[c.key] = (c, strat, st)
+        ranking = self.ranker.rank(u.asset, last.to_dict(), list(setups), [c.key for c in self.universe], quality,
+                                   pd.Timestamp(now))
+        return setups, ranking, errors
 
     def _scan(self, perp: str, chain, now: dt.datetime, kill_switch: bool) -> None:
         u = UNDERLYINGS[perp]
@@ -263,42 +321,52 @@ class TradingEngine:
         if exps:
             near = next((e for e in exps if (e - pd.Timestamp(now)).total_seconds() / 3600 >= 6), exps[-1])
             cur_iv = chain.atm_iv(u.asset, near, index_spot)
-        ivp = iv_percentile(cur_iv, self.iv_history.get(u.asset, pd.Series(dtype=float)), pd.Timestamp(now)) \
-            if cur_iv else None
+        ivp = iv_percentile(cur_iv, self._iv_series(u.asset), pd.Timestamp(now)) if cur_iv else None
+        if "iv_percentile" in frame.columns:  # the LIVE values on the latest bar only (earlier rows stay NaN: no look-ahead)
+            frame = frame.copy()
+            frame.loc[frame.index[-1], "iv_percentile"] = ivp if ivp is not None else float("nan")
+            frame.loc[frame.index[-1], "atm_iv"] = cur_iv if cur_iv else float("nan")
         statuses = []
         held = {(it["position"].strategy, it["position"].underlying) for it in self.broker.open_positions()}
+        mode = self.effective_ranker_mode()
+        extra = None
+        if mode != "off":
+            setups, ranking, errors = self._rank(frame, u, last, quality, now)
+            extra = {"mode": mode, "selected": ranking.selected, "reason": ranking.reason, "evidence": ranking.evidence_note,
+                     "table": [r for r in ranking.table if r["setup"]], "n_candidates": len(self.universe),
+                     "n_with_setup": len(setups), "errors": errors[:5]}
+            if mode == "select":
+                if ranking.selected is None:
+                    statuses.append(f"RANKER: NO TRADE - {ranking.reason}")
+                else:
+                    c, strat, setup = setups[ranking.selected]
+                    statuses.append(f"RANKER selected {c.key}")
+                    statuses.append(self._attempt(c.key, strat, c.moneyness, setup, u, chain, index_spot, last, ivp, quality,
+                                                  did, held, kill_switch, now))
+                self._record_decision(did, u.asset, now, quality, ivp, "; ".join(statuses),
+                                      "TRIGGERED" if any("OPENED" in x for x in statuses) else "WAITING_FOR_SETUP",
+                                      ranking_extra=extra, selected=ranking.selected)
+                return
         for v in self.variants:
             strat = v.strategy()
             setup = strat.setup_now(frame)
             if setup is None:
                 statuses.append(f"{v.key}: waiting for setup")
                 continue
-            if (v.key, u.asset) in held:
-                statuses.append(f"{v.key}: setup {setup.direction} ignored (already holding a {u.asset} position)")
-                continue
-            snap = self.broker.account_snapshot()
-            acct = self.tracker.account_state(snap, now, self.broker.is_connected(), kill_switch, self.broker.mode)
-            res = plan_trade(strat, v.moneyness, setup, u, chain, index_spot, float(last["close"]), now,
-                             self.settings, snap, relative_volume=last.get("relative_volume"), iv_percentile=ivp,
-                             data_quality=quality)
-            if not res.ok:
-                statuses.append(f"{v.key}: setup {setup.direction}, not tradable ({res.reason})")
-                continue
-            decision = evaluate_trade(acct, res.proposed)
-            if not decision.approved:
-                statuses.append(f"{v.key}: VETO ({decision.reason})")
-                continue
-            res.plan.decision_id, res.plan.risk_decision_id = did, decision.decision_id
-            opened = self.broker.open_structure(res.plan)
-            statuses.append(f"{v.key}: {'OPENED ' + opened.position_id if opened.ok else 'fill failed: ' + opened.reason}")
+            statuses.append(self._attempt(v.key, strat, v.moneyness, setup, u, chain, index_spot, last, ivp, quality, did,
+                                          held, kill_switch, now))
         self._record_decision(did, u.asset, now, quality, ivp, "; ".join(statuses),
-                              "TRIGGERED" if any("OPENED" in s for s in statuses) else "WAITING_FOR_SETUP")
+                              "TRIGGERED" if any("OPENED" in s for s in statuses) else "WAITING_FOR_SETUP",
+                              ranking_extra=extra)
 
-    def _record_decision(self, did, asset, now, quality, ivp, text, status) -> None:
-        self.last_decisions[asset] = {"at": now, "status": status, "detail": text, "iv_percentile": ivp}
+    def _record_decision(self, did, asset, now, quality, ivp, text, status, ranking_extra=None, selected=None) -> None:
+        self.last_decisions[asset] = {"at": now, "status": status, "detail": text, "iv_percentile": ivp,
+                                      "ranker": ranking_extra}
+        ranking = {"iv_percentile": ivp, "detail": text}
+        if ranking_extra is not None:
+            ranking["ranker"] = ranking_extra
         with db.get_session() as s:
             s.add(Decision(decision_id=did, underlying=asset, bar_time=to_db_time(pd.Timestamp(
                 last_closed_bar_start(now, "5m"))), data_quality=quality, setup_status=status,
                 no_trade_reason=text if status != "TRIGGERED" else None,
-                selected_strategy=",".join(v.key for v in self.variants),
-                ranking={"iv_percentile": ivp, "detail": text}))
+                selected_strategy=selected if selected else ",".join(v.key for v in self.variants), ranking=ranking))

@@ -138,3 +138,22 @@ Notes:
 - `docs/DELTA_API_NOTES.md`: what is verified about Delta's API and what is not.
 - `docs/REFERENCE_README.md`: the design this project was ported from.
 - `docs/research/`: back-test and strategy-search reports.
+
+## 11. The live ranker and the IV percentile
+
+- **All 36 strategies are ranked every bar** (the 10 v3, the 14 older v2, the two Supertrend "tight" variants and the 10 new S1-S10
+  families). The ranker scores only the strategies that have a valid setup right now, using each strategy's history of closed
+  trades (`delta_intelligence/evidence/ranker_evidence.parquet`), and picks one or says **NO TRADE**. Its thresholds are unchanged:
+  it needs a shrunk edge of at least 0.05 R, MEDIUM confidence, stable time folds and a clear winner. With today's evidence
+  (modelled prices, no strategy accepted) that means **NO TRADE almost all the time**, so it trades far less than the two
+  always-on variants did.
+- `RANKER_MODE` in `.env`: `select` (default: the pick is the only strategy allowed to trade, **PAPER only**), `shadow` (ranked and
+  shown; the two variants keep trading) or `off`. In LIVE mode `select` becomes `shadow` automatically. The pick still goes
+  through the planner and the risk engine, which keep the last word.
+- Refresh the evidence after new data: `python scripts/build_ranker_evidence.py` (needs the local candle and IV caches), then commit
+  the parquet so a deployed app has it.
+- **IV percentile.** It needs a history of the ATM implied volatility. Sources, in order: the local parquet (built offline, git-ignored),
+  a small committed seed (`python scripts/build_iv_seed.py`) and the recorder's own option snapshots (`chain_snapshots`). A deployed
+  copy has no local parquet, which is why the percentile used to be blank. It is now shown on Command Center and Market State with its
+  source and observation count; below 100 observations it says how many it has instead of guessing. The seed goes stale after about
+  two months: re-run the script or keep the engine (or `python scripts/record_chain.py`) running.

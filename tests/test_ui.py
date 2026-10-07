@@ -80,7 +80,7 @@ def test_every_page_renders_offline() -> None:
         os.chdir(saved_cwd)
     bad = [(n, m) for n, ok, m, _ in results if not ok]
     assert not bad, bad
-    assert len(results) == 14
+    assert len(results) == 15
 
 
 @pytest.mark.parametrize("password,mode,authed,expected", [
