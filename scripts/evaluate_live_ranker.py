@@ -22,10 +22,11 @@ import pandas as pd  # noqa: E402
 
 from delta_intelligence.analogues.analogue_engine import COMPARISON_FEATURES  # noqa: E402
 from delta_intelligence.ranking.evaluate_ranker import Decision, summarize  # noqa: E402
-from delta_intelligence.ranking.live_ranker import LiveRanker  # noqa: E402
+from delta_intelligence.ranking.live_ranker import LiveRanker, top_candidates  # noqa: E402
 
 
-def evaluate_asset(ranker: LiveRanker, asset: str, warmup_frac: float = 0.4, max_points: int | None = 600) -> list[Decision]:
+def evaluate_asset(ranker: LiveRanker, asset: str, warmup_frac: float = 0.4, max_points: int | None = 600,
+                   rule: str = "strict") -> list[Decision]:
     ev = ranker.evidence[ranker.evidence["asset"] == asset]
     if ev.empty:
         return []
@@ -41,7 +42,11 @@ def evaluate_asset(ranker: LiveRanker, asset: str, warmup_frac: float = 0.4, max
         names = list(g["strategy_name"].unique())
         current = g.iloc[0][COMPARISON_FEATURES].to_dict()  # the market state at that bar
         res = ranker.rank(asset, current, names, names, "OK", now=t)
-        sel = res.selected
+        if rule == "top":  # the best-scoring signalling strategy with evidence and a positive edge estimate
+            cands = top_candidates(res.table)
+            sel = cands[0]["strategy"] if cands else None
+        else:
+            sel = res.selected
         r_at = g.groupby("strategy_name")["r_multiple"].mean()
         out.append(Decision(asset, t, str(t.date()), sel, len(names), float(r_at[sel]) if sel else None, float(r_at.mean())))
     return out
@@ -51,6 +56,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--max-points", type=int, default=600)
     ap.add_argument("--assets", nargs="+", default=["BTC", "ETH", "XAUT"])
+    ap.add_argument("--rule", choices=["strict", "top"], default="strict",
+                    help="strict = the ranker's NO-TRADE rules; top = the best-scoring signalling strategy with a positive edge")
     args = ap.parse_args()
     ranker = LiveRanker.from_file()
     if not ranker.available:
@@ -58,7 +65,7 @@ def main() -> int:
         return 1
     print(ranker.describe())
     for a in args.assets:
-        d = evaluate_asset(ranker, a, max_points=args.max_points or None)
+        d = evaluate_asset(ranker, a, max_points=args.max_points or None, rule=args.rule)
         if not d:
             print(f"{a}: no decision points")
             continue

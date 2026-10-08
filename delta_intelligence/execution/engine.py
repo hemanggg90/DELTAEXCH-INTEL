@@ -38,6 +38,7 @@ from delta_intelligence.execution.monitor import decide_exits
 from delta_intelligence.execution.planner import plan_trade
 from delta_intelligence.execution.recovery import HEARTBEAT_KEY, recover
 from delta_intelligence.options.analytics import iv_percentile
+from delta_intelligence.ranking.live_ranker import top_candidates
 from delta_intelligence.risk.risk_engine import evaluate_trade
 from delta_intelligence.strategies.active import ACTIVE_VARIANTS
 from delta_intelligence.utils.logging_utils import log_event, new_decision_id
@@ -129,10 +130,11 @@ class TradingEngine:
         self.interval = interval_sec
         self.record_every = record_every_sec
         self.variants = variants
-        # Live ranker (optional). `select`: the ranked winner is the ONLY strategy that may trade (PAPER mode only);
-        # `shadow`: the ranking is computed and shown but the engine trades `variants` as before; `off`: no ranker.
+        # Live ranker (optional). `top`: the best-ranked SIGNALLING strategy with a positive edge estimate trades, trying the next
+        # one if a trade is rejected (PAPER only); `select`: only the strict ranker's pick may trade (PAPER only); `shadow`: the
+        # ranking is computed and shown but the engine trades `variants` as before; `off`: no ranker.
         self.ranker, self.universe = ranker, tuple(universe or ())
-        self.ranker_mode = ranker_mode if ranker is not None and ranker_mode in ("select", "shadow") else "off"
+        self.ranker_mode = ranker_mode if ranker is not None and ranker_mode in ("top", "select", "shadow") else "off"
         self.iv_history_fn = iv_history_fn
         self.frame_builder = frame_builder or self._default_frame
         self.tracker = AccountTracker(self.settings)
@@ -290,9 +292,9 @@ class TradingEngine:
         self.broker.close_position(ex.position_id, ex.reason)
 
     def effective_ranker_mode(self) -> str:
-        """`select` is honoured ONLY for a PAPER broker. In LIVE the ranker can only watch: letting it pick real trades is a
-        separate decision (see CLAUDE.md)."""
-        if self.ranker_mode == "select" and getattr(self.broker, "mode", "PAPER") != "PAPER":
+        """`top` and `select` are honoured ONLY for a PAPER broker. In LIVE the ranker can only watch: letting it pick real trades
+        is a separate decision (see CLAUDE.md)."""
+        if self.ranker_mode in ("top", "select") and getattr(self.broker, "mode", "PAPER") != "PAPER":
             return "shadow"
         return self.ranker_mode
 
@@ -379,6 +381,36 @@ class TradingEngine:
             extra = {"mode": mode, "selected": ranking.selected, "reason": ranking.reason, "evidence": ranking.evidence_note,
                      "table": ranking.table, "leader": ranking.leader, "n_candidates": len(self.universe),
                      "n_with_setup": len(setups), "errors": errors[:5]}
+            if mode == "top":
+                cands = top_candidates(ranking.table)
+                opened_key = None
+                for row in cands:  # best score first; a rejected trade passes to the next-ranked signalling strategy
+                    c, strat, setup = setups[row["strategy"]]
+                    stat = self._attempt(c.key, strat, c.moneyness, setup, u, chain, index_spot, last, ivp, quality, did, held,
+                                         kill_switch, now)
+                    statuses.append(f"RANKER(top) #{row['rank']} {stat}")
+                    if ": OPENED" in stat:
+                        opened_key = c.key
+                        break
+                if not cands:
+                    statuses.append("RANKER(top): NO TRADE - no signalling strategy has evidence and a positive edge estimate"
+                                    + (f" (strict ranker: {ranking.reason})" if setups else ""))
+                elif opened_key is None:
+                    statuses.append(f"RANKER(top): NO TRADE - none of the {len(cands)} top-ranked signalling strategies could be traded")
+                extra["strict_selected"] = ranking.selected
+                extra["selected"] = opened_key
+                extra["attempts"] = len(statuses)
+                if opened_key:
+                    below = ranking.selected != opened_key
+                    extra["reason"] = (f"Top-ranked signalling strategy with a positive edge estimate: {opened_key}"
+                                       + ("; BELOW the strict evidence bar (" + ranking.reason + ")" if below else "; also the strict pick"))
+                    for r in extra["table"]:
+                        if r["strategy"] == opened_key:
+                            r["selected"] = True
+                            r["note"] = "TRADED (top-ranked signalling" + ("; below the strict evidence bar)" if below else ")")
+                self._record_decision(did, u.asset, now, quality, ivp, "; ".join(statuses),
+                                      "TRIGGERED" if opened_key else "WAITING_FOR_SETUP", ranking_extra=extra, selected=opened_key)
+                return
             if mode == "select":
                 if ranking.selected is None:
                     statuses.append(f"RANKER: NO TRADE - {ranking.reason}")

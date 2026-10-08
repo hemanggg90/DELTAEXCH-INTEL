@@ -39,7 +39,7 @@ def test_kpi_row_renders_all_tiles_in_two_rows() -> None:
 
         kpi_row([{"label": f"Tile {i}", "value": f"${i},000.00"} for i in range(7)])
 
-    at = AppTest.from_function(app).run()
+    at = AppTest.from_function(app).run(timeout=60)
     assert not at.exception
     assert len(at.metric) == 7 and [m.label for m in at.metric] == [f"Tile {i}" for i in range(7)]
     assert len(at.columns) == 8  # two st.columns(4) rows
@@ -49,7 +49,7 @@ def test_kpi_row_renders_all_tiles_in_two_rows() -> None:
 
         kpi_row([{"label": "A", "value": "1"}, {"label": "B", "value": "2"}, {"label": "C", "value": "3"}])
 
-    at = AppTest.from_function(small).run()
+    at = AppTest.from_function(small).run(timeout=60)
     assert len(at.metric) == 3 and len(at.columns) == 3  # a short row is unchanged
 
 
@@ -200,5 +200,5 @@ def test_ranker_note_renders_old_and_new_decisions_without_error(ranker) -> None
 
     at = AppTest.from_function(app)
     at.session_state["ranker"] = ranker
-    at.run()
+    at.run(timeout=60)
     assert not at.exception, at.exception

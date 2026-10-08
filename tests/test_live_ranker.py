@@ -206,12 +206,12 @@ def test_a_broken_candidate_does_not_blind_the_ranker(env) -> None:
 
 def test_ranker_mode_environment_switch(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("RANKER_MODE", raising=False)
-    assert ranker_mode() == "select"
-    for v in ("shadow", "off", "SELECT"):
+    assert ranker_mode() == "top"  # default: the top-ranked signalling strategy trades (paper)
+    for v in ("shadow", "off", "SELECT", "Top"):
         monkeypatch.setenv("RANKER_MODE", v)
         assert ranker_mode() == v.lower()
     monkeypatch.setenv("RANKER_MODE", "garbage")
-    assert ranker_mode() == "select"
+    assert ranker_mode() == "top"
     monkeypatch.setenv("RANKER_MODE", "off")
     assert "ranker" not in engine_kwargs(SimpleNamespace(data_cache_dir=tmp_path, data_env="X"))
     monkeypatch.setenv("RANKER_MODE", "shadow")
@@ -339,6 +339,96 @@ def test_engine_stores_the_whole_leaderboard_and_the_leader(env) -> None:
     assert any(row["note"].startswith("no historical trades") for row in r["table"])
 
 
-def test_default_mode_is_select(monkeypatch) -> None:
+def test_default_mode_is_top(monkeypatch) -> None:
     monkeypatch.delenv("RANKER_MODE", raising=False)
-    assert ranker_mode() == "select"
+    assert ranker_mode() == "top"
+
+
+# ---- `top` mode: the best-ranked signalling strategy trades, trying the next one if it is rejected ------------------------------------
+from delta_intelligence.ranking.live_ranker import MAX_TOP_ATTEMPTS, TOP_MIN_EDGE_R, top_candidates  # noqa: E402
+
+
+def row(name, score, edge, setup=True, samples=30):
+    return {"rank": 0, "strategy": name, "setup": setup, "score": score, "edge_r": edge, "confidence": "LOW", "samples": samples,
+            "eligible": False, "selected": False, "note": ""}
+
+
+def test_top_candidates_orders_by_score_and_applies_the_documented_floor() -> None:
+    table = [row("low", 0.1, 0.05), row("best", 0.9, 0.2), row("no signal", 0.99, 0.5, setup=False),
+             row("negative", 0.8, -0.01), row("zero", 0.7, 0.0), row("no evidence", 0.0, None, samples=0), row("mid", 0.5, 0.01)]
+    assert [r["strategy"] for r in top_candidates(table)] == ["best", "mid", "low"]  # signalling, positive edge, best first
+    assert TOP_MIN_EDGE_R == 0.0 and MAX_TOP_ATTEMPTS == 5
+    assert top_candidates([row(f"s{i}", i / 10, 0.1) for i in range(1, 10)]) == top_candidates(
+        [row(f"s{i}", i / 10, 0.1) for i in range(1, 10)])[:MAX_TOP_ATTEMPTS]
+    assert len(top_candidates([row(f"s{i}", i / 10, 0.1) for i in range(1, 10)])) == MAX_TOP_ATTEMPTS
+    assert top_candidates([]) == []
+
+
+def test_top_mode_trades_the_best_ranked_signalling_strategy_even_below_the_strict_bar(env) -> None:
+    eng = engine(env, evidence({ATM: 0.05, ITM: -0.2}), mode="top")  # ATM edge estimate ~+0.02 R: positive, below the strict 0.05 R bar
+    assert eng.effective_ranker_mode() == "top"
+    eng.run_cycle()
+    with db.get_session() as s:
+        assert [p.strategy for p in s.query(Position).all()] == [ATM]
+        d = s.query(Decision).one()
+        r = d.ranking["ranker"]
+        assert d.selected_strategy == ATM and d.setup_status == "TRIGGERED" and r["mode"] == "top" and r["selected"] == ATM
+        assert r["strict_selected"] is None and "BELOW the strict evidence bar" in r["reason"]
+        row_ = next(x for x in r["table"] if x["strategy"] == ATM)
+        assert row_["selected"] is True and "below the strict evidence bar" in row_["note"]
+        assert f"RANKER(top)" in d.ranking["detail"] and f"{ATM}: OPENED" in d.ranking["detail"]
+
+
+def test_top_mode_tries_the_next_ranked_strategy_when_the_first_is_rejected(env) -> None:
+    from delta_intelligence.execution.planner import TradePlan
+    from delta_intelligence.options.structures import long_call
+
+    s, box, broker = env
+    st = long_call("BTC", 85000, _h.EXP.to_pydatetime(), 10, 0.001, "C-BTC-85000-031026")
+    assert broker.open_structure(TradePlan(ATM, st, 84000.0, 87000.0, premium_stop_pct=35.0)).ok  # ATM is already held
+    eng = engine(env, evidence({ATM: 0.45, ITM: 0.1}), mode="top")
+    eng.run_cycle()
+    with db.get_session() as ses:
+        assert sorted(p.strategy for p in ses.query(Position).all()) == sorted([ATM, ITM])  # the held one was skipped, ITM opened
+        r = ses.query(Decision).one().ranking
+        assert "already holding" in r["detail"] and f"{ITM}: OPENED" in r["detail"] and r["ranker"]["selected"] == ITM
+
+
+def test_top_mode_opens_at_most_one_position_per_bar(env) -> None:
+    eng = engine(env, evidence({ATM: 0.45, ITM: 0.4}), mode="top")
+    eng.run_cycle()
+    with db.get_session() as s:
+        assert s.query(Position).count() == 1  # both are signalling and eligible, only the top-ranked one trades
+
+
+def test_top_mode_with_no_usable_evidence_says_why_and_takes_no_trade(env) -> None:
+    eng = engine(env, evidence({"some other strategy": 0.5}), mode="top")
+    eng.run_cycle()
+    with db.get_session() as s:
+        assert s.query(Position).count() == 0
+        d = s.query(Decision).one()
+        assert "NO TRADE - no signalling strategy has evidence and a positive edge estimate" in d.no_trade_reason
+        assert d.ranking["ranker"]["selected"] is None
+
+
+def test_top_mode_never_trades_a_negative_edge_strategy(env) -> None:
+    eng = engine(env, evidence({ATM: -0.3, ITM: -0.1}), mode="top")
+    eng.run_cycle()
+    with db.get_session() as s:
+        assert s.query(Position).count() == 0
+
+
+def test_top_mode_still_goes_through_the_risk_engine_and_is_paper_only(env) -> None:
+    from delta_intelligence.execution.engine import set_kill_switch
+
+    set_kill_switch(True, "test")
+    eng = engine(env, evidence({ATM: 0.45}), mode="top")
+    eng.run_cycle()
+    with db.get_session() as s:
+        assert s.query(Position).count() == 0 and "kill switch" in s.query(Decision).one().no_trade_reason
+    set_kill_switch(False, "test done")
+    s_, box, broker = env
+    eng.broker = SimpleNamespace(mode="LIVE")
+    assert eng.effective_ranker_mode() == "shadow"  # in LIVE the ranker never picks trades
+    eng.broker = broker
+    assert eng.effective_ranker_mode() == "top"

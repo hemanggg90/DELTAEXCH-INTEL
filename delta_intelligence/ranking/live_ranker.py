@@ -29,6 +29,20 @@ EVIDENCE_PATH = Path(__file__).resolve().parents[1] / "evidence" / "ranker_evide
 EVIDENCE_COLUMNS = ["strategy_name", "asset", "entry_timestamp", "exit_timestamp", "r_multiple", "underlying_r", *COMPARISON_FEATURES]
 
 
+TOP_MIN_EDGE_R = 0.0  # `top` mode never trades a strategy whose own shrunk edge estimate (net option R) is at or below this
+MAX_TOP_ATTEMPTS = 5  # strategies tried per bar in `top` mode (each rejected attempt writes a risk event)
+
+
+def top_candidates(table: list[dict], min_edge: float = TOP_MIN_EDGE_R, limit: int = MAX_TOP_ATTEMPTS) -> list[dict]:
+    """`top` mode: leaderboard rows with a signal now, best score first, that have EVIDENCE and a positive edge estimate in the
+    current conditions. Unlike the strict rule it ignores the confidence / fold-stability / winner-gap tests, which is why a
+    trade made this way is labelled 'below the strict evidence bar' when the strict ranker would not have chosen it."""
+    rows = [r for r in table if r.get("setup") and (r.get("samples") or 0) > 0 and r.get("score") is not None
+            and r.get("edge_r") is not None and r["edge_r"] > min_edge]
+    rows.sort(key=lambda r: r["score"], reverse=True)
+    return rows[:limit]
+
+
 @dataclass
 class LiveRanking:
     decision: RankingDecision

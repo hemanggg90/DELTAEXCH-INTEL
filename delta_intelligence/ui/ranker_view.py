@@ -62,7 +62,11 @@ def ranker_note(decision) -> None:
     if not r:
         return
     mode = r.get("mode")
-    if r.get("selected"):
+    if r.get("selected") and mode == "top":
+        below = r.get("strict_selected") != r["selected"]
+        (st.warning if below else st.success)(f"Ranker (top): trading **{r['selected']}**, the best-ranked signalling strategy. "
+                                              f"{r.get('reason', '')}")
+    elif r.get("selected"):
         st.success(f"Ranker ({mode}): selected **{r['selected']}**, the best-ranked strategy with a signal. {r.get('reason', '')}")
     else:
         st.info(f"Ranker ({mode}): **NO TRADE**. {r.get('reason', '')}")
@@ -103,7 +107,7 @@ def external_engine_message(owner: dict, age_sec: float | None, app_ranker_mode:
         ranker = owner.get("ranker_mode") or "off"
         detail = f"mode {owner.get('mode', '?')}, ranker `{ranker}`, code `{owner.get('version', 'unknown')}`"
         tone = "info"
-        if ranker in ("off", "shadow") and app_ranker_mode == "select":
+        if ranker in ("off", "shadow") and app_ranker_mode in ("top", "select"):
             tone, detail = "warning", detail + ". It is NOT letting the ranker choose trades"
         if owner.get("version") not in (None, "unknown") and my_version != "unknown" and owner["version"] != my_version:
             tone, detail = "warning", detail + f". This app runs code `{my_version}`: that engine runs different code"
@@ -121,7 +125,9 @@ def engine_ranker_line(eng, external_owner: dict | None = None) -> None:
         return
     stt = eng.status()
     mode = stt.get("ranker_mode", "off")
-    desc = {"select": "the ranker picks the strategy; ONLY its pick may trade (paper)",
+    desc = {"top": "the best-ranked signalling strategy trades (paper), trying the next one if rejected; may be below the strict "
+                   "evidence bar",
+            "select": "only the STRICT ranker's pick may trade (paper)",
             "shadow": "the ranker ranks and displays, while the always-on variants trade as before",
             "off": "no ranker"}[mode]
     st.caption(f"Ranker mode **{mode}**: {desc}. {stt.get('ranker') or ''}")

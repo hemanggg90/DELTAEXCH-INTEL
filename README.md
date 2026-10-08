@@ -144,13 +144,18 @@ Notes:
 - **All 36 strategies are ranked every bar** (the 10 v3, the 14 older v2, the two Supertrend "tight" variants and the 10 new S1-S10
   families), whether or not they have a signal, and the dashboard shows the full leaderboard per underlying (Command Center and
   Strategy Intelligence → Live ranker). Each strategy is scored from its history of closed trades
-  (`delta_intelligence/evidence/ranker_evidence.parquet`) in market conditions like the current ones. A strategy can only be traded
-  when it has a signal right now, so the engine trades **the best-ranked strategy that is signalling**, or says **NO TRADE**. The
-  thresholds are unchanged: a shrunk edge of at least 0.05 R, MEDIUM confidence, stable time folds and a clear winner. With today's
-  evidence (modelled prices, no strategy accepted) that means **NO TRADE almost all the time**.
-- `RANKER_MODE` in `.env`: `select` (default: the pick is the only strategy allowed to trade, **PAPER only**), `shadow` (ranked and
-  shown; the two variants keep trading) or `off`. In LIVE mode `select` becomes `shadow` automatically. The pick still goes
-  through the planner and the risk engine, which keep the last word.
+  (`delta_intelligence/evidence/ranker_evidence.parquet`) in market conditions like the current ones.
+- `RANKER_MODE` in `.env` (paper only; in LIVE every mode except `off` is just a display):
+  - `top` (default): the **best-ranked strategy that is signalling** trades, if the ranker's own edge estimate for it is positive; if
+    its trade is rejected (breakeven gate, no suitable strike, risk limit) the next-ranked one is tried, up to 5 per bar, and at most
+    one position opens per bar. It can trade **below the strict evidence bar**, and the dashboard labels such a trade.
+  - `select`: only the strict ranker's pick may trade (shrunk edge >= 0.05 R, MEDIUM confidence, stable folds, a clear winner). With
+    today's evidence that means NO TRADE almost all the time.
+  - `shadow`: ranked and shown; the two Supertrend variants keep trading their own signals. `off`: no ranker.
+- **What to expect from `top`:** it trades far more often than `select` (in a replay on the evidence: about 23% of BTC and 15% of ETH
+  decision points), but the evidence shows **no edge**: the replayed net R was negative (BTC about -0.06, ETH about -0.21) and no
+  better than picking a signalling strategy at random. It is a paper experiment, on modelled prices. The risk limits (3 open positions,
+  6 trades a day, exposure caps) and the breakeven gate are unchanged and still apply.
 - Refresh the evidence after new data: `python scripts/build_ranker_evidence.py` (needs the local candle and IV caches), then commit
   the parquet so a deployed app has it.
 - **IV percentile.** It needs a history of the ATM implied volatility. Sources, in order: the local parquet (built offline, git-ignored),

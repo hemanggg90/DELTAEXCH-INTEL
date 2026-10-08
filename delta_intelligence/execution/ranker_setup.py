@@ -1,11 +1,13 @@
 """Shared wiring of the live ranker and the live IV history for every place that builds a TradingEngine (dashboard, headless
 runner). One definition, so the dashboard and `scripts/run_engine.py` behave the same.
 
-`RANKER_MODE` (environment / Streamlit secrets): `select` (default), `shadow` or `off`.
-- select: the ranker's choice is the only strategy that may trade, and only for a PAPER broker;
+`RANKER_MODE` (environment / Streamlit secrets): `top` (default), `select`, `shadow` or `off`.
+- top: the best-ranked strategy that is signalling (with evidence and a positive edge estimate) trades, trying the next-ranked one
+  if a trade is rejected; PAPER only. It can trade below the strict evidence bar, and the dashboard says so;
+- select: the STRICT ranker's choice is the only strategy that may trade, and only for a PAPER broker;
 - shadow: ranked and displayed, while the two always-on Supertrend variants keep trading as before;
 - off: no ranker.
-In LIVE mode `select` automatically becomes `shadow` (see `TradingEngine.effective_ranker_mode`).
+In LIVE mode `top` and `select` automatically become `shadow` (see `TradingEngine.effective_ranker_mode`).
 """
 from __future__ import annotations
 
@@ -20,12 +22,12 @@ from delta_intelligence.options import iv_live
 from delta_intelligence.ranking.live_ranker import LiveRanker
 from delta_intelligence.strategies.universe import UNIVERSE
 
-VALID_MODES = ("select", "shadow", "off")
+VALID_MODES = ("top", "select", "shadow", "off")
 
 
 def ranker_mode() -> str:
-    m = os.getenv("RANKER_MODE", "select").strip().lower()
-    return m if m in VALID_MODES else "select"
+    m = os.getenv("RANKER_MODE", "top").strip().lower()
+    return m if m in VALID_MODES else "top"
 
 
 def iv_parquet_root(settings) -> Path:

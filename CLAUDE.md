@@ -23,8 +23,10 @@ edge right now, and is there a valid setup? If not, do nothing.* **NO TRADE is a
   - the risk engine.
 
   Live sells also go with `reduce_only`. Max loss = premium paid + fees.
-- **The live ranker** (`ranking/live_ranker.py`, `RANKER_MODE`) ranks every strategy in `strategies/universe.py` and may choose the
-  PAPER trade (`select`). In LIVE it only watches (`shadow`): letting it pick real trades needs a separate, explicit decision.
+- **The live ranker** (`ranking/live_ranker.py`, `RANKER_MODE`) ranks every strategy in `strategies/universe.py` and chooses the PAPER
+  trade: `top` (default: the best-ranked signalling strategy with a positive edge estimate, next one if rejected; may be below the
+  strict evidence bar) or `select` (strict ranker only). In LIVE it only watches (`shadow`): letting it pick real trades needs a
+  separate, explicit decision.
   The risk engine still has the last word on every pick. Missing evidence means NO TRADE, never an invented score.
 - **Exits** are managed by the engine: underlying invalidation, premium stop (−35%), strategy time stop, forced exit
   before the expiry guard (2 h).
